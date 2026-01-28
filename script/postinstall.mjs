@@ -4,10 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const require = createRequire(import.meta.url);
+const pkg = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
+);
 
 const detectPlatformAndArch = () => {
   let platform;
@@ -42,28 +43,44 @@ const detectPlatformAndArch = () => {
   return { platform, arch };
 };
 
-const verifyBinary = () => {
+const downloadFile = async (url, targetPath) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download ${url} (${response.status})`);
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  fs.writeFileSync(targetPath, buffer);
+};
+
+const installBinary = async () => {
   const { platform, arch } = detectPlatformAndArch();
-  const packageName = `opencode-worktree-${platform}-${arch}`;
-  const binaryName =
-    platform === "windows" ? "opencode-worktree.exe" : "opencode-worktree";
+  const isWindows = platform === "windows";
+  const binaryName = isWindows
+    ? "opencode-worktree.exe"
+    : "opencode-worktree-bin";
+  const downloadName = `opencode-worktree-${platform}-${arch}${isWindows ? ".exe" : ""}`;
+  const version = pkg.version;
+  const downloadUrl = `https://github.com/arturosdg/opencode-worktree/releases/download/v${version}/${downloadName}`;
 
-  const packageJsonPath = require.resolve(`${packageName}/package.json`);
-  const packageDir = path.dirname(packageJsonPath);
-  const binaryPath = path.join(packageDir, "bin", binaryName);
+  const binDir = path.join(__dirname, "..", "bin");
+  const binaryPath = path.join(binDir, binaryName);
 
-  if (!fs.existsSync(binaryPath)) {
-    throw new Error(`Binary not found at ${binaryPath}`);
+  fs.mkdirSync(binDir, { recursive: true });
+  await downloadFile(downloadUrl, binaryPath);
+
+  if (!isWindows) {
+    fs.chmodSync(binaryPath, 0o755);
   }
 
   return binaryPath;
 };
 
 try {
-  const binaryPath = verifyBinary();
-  console.log(`opencode-worktree binary verified at: ${binaryPath}`);
+  const binaryPath = await installBinary();
+  console.log(`opencode-worktree binary installed at: ${binaryPath}`);
 } catch (error) {
-  console.error("Failed to setup opencode-worktree binary.");
+  console.error("Failed to install opencode-worktree binary.");
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
 }

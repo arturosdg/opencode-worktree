@@ -44,24 +44,17 @@ const detectPlatformAndArch = () => {
 };
 
 const resolveBinaryPath = () => {
-  const { platform, arch } = detectPlatformAndArch();
-  const packageName = `${pkg.name}-${platform}-${arch}`;
-  const binaryName = platform === 'windows' ? 'opencode-worktree.exe' : 'opencode-worktree';
+  const { platform } = detectPlatformAndArch();
+  const binaryName = platform === 'windows' ? 'opencode-worktree.exe' : 'opencode-worktree-bin';
+  const binaryPath = path.join(__dirname, 'bin', binaryName);
 
-  try {
-    const packageJsonPath = require.resolve(`${packageName}/package.json`);
-    const packageDir = path.dirname(packageJsonPath);
-    const binaryPath = path.join(packageDir, 'bin', binaryName);
-
-    if (!fs.existsSync(binaryPath)) {
-      throw new Error(`Binary not found at ${binaryPath}`);
-    }
-
-    return binaryPath;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not find ${packageName}: ${message}`);
+  if (!fs.existsSync(binaryPath)) {
+    throw new Error(
+      `Binary not found at ${binaryPath}. Run npm install -g ${pkg.name} again to re-download.`,
+    );
   }
+
+  return binaryPath;
 };
 
 const run = () => {

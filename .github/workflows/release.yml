@@ -30,7 +30,15 @@ jobs:
       - name: Build sanity check
         run: bun run script/build.ts --single
 
-      - name: Publish packages
+      - name: Build release artifacts
+        run: bun run script/build.ts
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/release/*
+
+      - name: Publish npm package
         run: bun run script/publish.ts
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

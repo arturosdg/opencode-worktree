@@ -17,6 +17,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 const distDir = path.join(rootDir, "dist");
+const releaseDir = path.join(distDir, "release");
 
 const pkg = JSON.parse(
   await Bun.file(path.join(rootDir, "package.json")).text(),
@@ -66,6 +67,7 @@ export const targets: Target[] = [
 const ensureCleanDist = () => {
   fs.rmSync(distDir, { recursive: true, force: true });
   fs.mkdirSync(distDir, { recursive: true });
+  fs.mkdirSync(releaseDir, { recursive: true });
 };
 
 const installPlatformDependencies = async () => {
@@ -75,8 +77,7 @@ const installPlatformDependencies = async () => {
 
 const buildBinary = async (target: Target) => {
   const name = `${packageName}-${target.packagePlatform}-${target.arch}`;
-  const outDir = path.join(distDir, name, "bin");
-  fs.mkdirSync(outDir, { recursive: true });
+  const outDir = path.join(releaseDir);
 
   const parserWorker = fs.realpathSync(
     path.join(rootDir, "node_modules/@opentui/core/parser.worker.js"),
@@ -84,7 +85,7 @@ const buildBinary = async (target: Target) => {
   const bunfsRoot = target.os === "win32" ? "B:/~BUN/root/" : "/$bunfs/root/";
   const workerRelativePath = path
     .relative(rootDir, parserWorker)
-    .replaceAll("\\", "/");
+    .replace(/\\/g, "/");
 
   let result: Bun.BuildOutput;
   try {
@@ -93,7 +94,10 @@ const buildBinary = async (target: Target) => {
       minify: true,
       compile: {
         target: target.bunTarget as Bun.Build.Target,
-        outfile: path.join(outDir, target.binaryName),
+        outfile: path.join(
+          outDir,
+          name + (target.os === "win32" ? ".exe" : ""),
+        ),
         autoloadBunfig: false,
         autoloadDotenv: false,
         autoloadPackageJson: true,
@@ -122,73 +126,7 @@ const buildBinary = async (target: Target) => {
     throw new Error(`Bundle failed for ${name}:\n${logs}`);
   }
 
-  const packageJson = {
-    name,
-    version,
-    os: [target.os],
-    cpu: [target.arch],
-    bin: {
-      [packageName]: `./bin/${target.binaryName}`,
-    },
-    files: ["bin"],
-    license: "MIT",
-  };
-
-  await Bun.write(
-    path.join(distDir, name, "package.json"),
-    JSON.stringify(packageJson, null, 2),
-  );
-
   return name;
-};
-
-const buildWrapper = async (binaryPackages: string[]) => {
-  const wrapperDir = path.join(distDir, packageName);
-  const wrapperBinDir = path.join(wrapperDir, "bin");
-
-  fs.mkdirSync(wrapperBinDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(rootDir, "bin/opencode-worktree"),
-    path.join(wrapperBinDir, "opencode-worktree"),
-  );
-  fs.copyFileSync(
-    path.join(rootDir, "script/postinstall.mjs"),
-    path.join(wrapperDir, "postinstall.mjs"),
-  );
-
-  const optionalDependencies = Object.fromEntries(
-    binaryPackages.map((name) => [name, version]),
-  );
-
-  const wrapperPackageJson = {
-    name: packageName,
-    version,
-    description: pkg.description,
-    license: "MIT",
-    author: pkg.author,
-    repository: pkg.repository,
-    bugs: pkg.bugs,
-    homepage: pkg.homepage,
-    bin: {
-      [packageName]: "./bin/opencode-worktree",
-    },
-    scripts: {
-      postinstall: "node ./postinstall.mjs",
-    },
-    dependencies: {
-      "update-notifier": "^7.3.1",
-    },
-    optionalDependencies,
-    files: ["bin", "postinstall.mjs"],
-    engines: {
-      node: ">=18",
-    },
-  };
-
-  await Bun.write(
-    path.join(wrapperDir, "package.json"),
-    JSON.stringify(wrapperPackageJson, null, 2),
-  );
 };
 
 export const buildAll = async ({ single = false } = {}) => {
@@ -201,13 +139,9 @@ export const buildAll = async ({ single = false } = {}) => {
       )
     : targets;
 
-  const binaryPackages: string[] = [];
   for (const target of selectedTargets) {
-    const name = await buildBinary(target);
-    binaryPackages.push(name);
+    await buildBinary(target);
   }
-
-  await buildWrapper(binaryPackages);
 };
 
 if (import.meta.main) {
