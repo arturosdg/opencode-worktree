@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Build sanity check
+        run: bun run script/build.ts --single
+
       - name: Publish packages
         run: bun run script/publish.ts
         env:

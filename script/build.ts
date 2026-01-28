@@ -80,23 +80,34 @@ const buildBinary = async (target: Target) => {
     .relative(rootDir, parserWorker)
     .replaceAll("\\", "/");
 
-  const result = await Bun.build({
-    entrypoints: [path.join(rootDir, "src/cli.ts"), parserWorker],
-    minify: true,
-    compile: {
-      target: target.bunTarget as Bun.Build.Target,
-      outfile: path.join(outDir, target.binaryName),
-      autoloadBunfig: false,
-      autoloadDotenv: false,
-      autoloadPackageJson: true,
-      autoloadTsconfig: true,
-    },
-    define: {
-      OTUI_TREE_SITTER_WORKER_PATH: JSON.stringify(
-        bunfsRoot + workerRelativePath,
-      ),
-    },
-  });
+  let result: Bun.BuildOutput;
+  try {
+    result = await Bun.build({
+      entrypoints: [path.join(rootDir, "src/cli.ts"), parserWorker],
+      minify: true,
+      compile: {
+        target: target.bunTarget as Bun.Build.Target,
+        outfile: path.join(outDir, target.binaryName),
+        autoloadBunfig: false,
+        autoloadDotenv: false,
+        autoloadPackageJson: true,
+        autoloadTsconfig: true,
+      },
+      define: {
+        OTUI_TREE_SITTER_WORKER_PATH: JSON.stringify(
+          bunfsRoot + workerRelativePath,
+        ),
+      },
+    });
+  } catch (error) {
+    console.error(`Bundle threw for ${name}`);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    } else {
+      console.error(error);
+    }
+    throw error;
+  }
 
   if (!result.success) {
     const logs = result.logs

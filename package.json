@@ -1,19 +1,19 @@
 {
   "name": "opencode-worktree",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": false,
   "type": "module",
   "description": "TUI for managing git worktrees with opencode integration.",
-  "author": "artsanch",
+  "author": "arturosdg",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/artsanch/opencode-worktree.git"
+    "url": "git+https://github.com/arturosdg/opencode-worktree.git"
   },
   "bugs": {
-    "url": "https://github.com/artsanch/opencode-worktree/issues"
+    "url": "https://github.com/arturosdg/opencode-worktree/issues"
   },
-  "homepage": "https://github.com/artsanch/opencode-worktree#readme",
+  "homepage": "https://github.com/arturosdg/opencode-worktree#readme",
   "keywords": [
     "git",
     "worktree",
