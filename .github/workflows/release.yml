@@ -1,0 +1,30 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Publish packages
+        run: bun run script/publish.ts
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

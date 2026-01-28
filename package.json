@@ -1,0 +1,52 @@
+{
+  "name": "opencode-worktree",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "TUI for managing git worktrees with opencode integration.",
+  "author": "artsanch",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/artsanch/opencode-worktree.git"
+  },
+  "bugs": {
+    "url": "https://github.com/artsanch/opencode-worktree/issues"
+  },
+  "homepage": "https://github.com/artsanch/opencode-worktree#readme",
+  "keywords": [
+    "git",
+    "worktree",
+    "tui",
+    "opencode",
+    "cli"
+  ],
+  "bin": {
+    "opencode-worktree": "bin/opencode-worktree"
+  },
+  "scripts": {
+    "dev": "bun src/cli.ts",
+    "build:single": "bun run script/build.ts --single",
+    "build:all": "bun run script/build.ts",
+    "publish": "bun run script/publish.ts"
+  },
+  "files": [
+    "bin",
+    "script",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.1.75",
+    "update-notifier": "^7.3.1"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/node": "^24.2.0",
+    "typescript": "^5.9.3"
+  }
+}
