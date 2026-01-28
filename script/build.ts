@@ -80,7 +80,7 @@ const buildBinary = async (target: Target) => {
     .relative(rootDir, parserWorker)
     .replaceAll("\\", "/");
 
-  await Bun.build({
+  const result = await Bun.build({
     entrypoints: [path.join(rootDir, "src/cli.ts"), parserWorker],
     minify: true,
     compile: {
@@ -97,6 +97,13 @@ const buildBinary = async (target: Target) => {
       ),
     },
   });
+
+  if (!result.success) {
+    const logs = result.logs
+      .map((log) => `${log.level}: ${log.message}`)
+      .join("\n");
+    throw new Error(`Bundle failed for ${name}:\n${logs}`);
+  }
 
   const packageJson = {
     name,
