@@ -3,6 +3,7 @@
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { $ } from "bun";
 
 type Target = {
   os: "darwin" | "linux" | "win32";
@@ -65,6 +66,11 @@ export const targets: Target[] = [
 const ensureCleanDist = () => {
   fs.rmSync(distDir, { recursive: true, force: true });
   fs.mkdirSync(distDir, { recursive: true });
+};
+
+const installPlatformDependencies = async () => {
+  const opentuiVersion = pkg.dependencies?.["@opentui/core"] ?? "^0.1.75";
+  await $`bun install --os="*" --cpu="*" @opentui/core@${opentuiVersion}`;
 };
 
 const buildBinary = async (target: Target) => {
@@ -186,6 +192,7 @@ const buildWrapper = async (binaryPackages: string[]) => {
 };
 
 export const buildAll = async ({ single = false } = {}) => {
+  await installPlatformDependencies();
   ensureCleanDist();
 
   const selectedTargets = single
