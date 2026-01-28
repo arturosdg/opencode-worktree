@@ -1,6 +1,6 @@
 {
   "name": "opencode-worktree",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "private": false,
   "type": "module",
   "description": "TUI for managing git worktrees with opencode integration.",
@@ -28,7 +28,8 @@
     "dev": "bun src/cli.ts",
     "build:single": "bun run script/build.ts --single",
     "build:all": "bun run script/build.ts",
-    "release:publish": "bun run script/publish.ts"
+    "release:publish": "bun run script/publish.ts",
+    "postinstall": "node ./script/postinstall.mjs"
   },
   "files": [
     "bin",
