@@ -51,7 +51,7 @@ const detectPlatformAndArch = () => {
 const resolveBinaryPath = () => {
   const { platform } = detectPlatformAndArch();
   const binaryName = platform === 'windows' ? 'opencode-worktree.exe' : 'opencode-worktree-bin';
-  const binaryPath = path.join(__dirname, 'bin', binaryName);
+  const binaryPath = path.join(__dirname, '..', 'bin', binaryName);
 
   if (!fs.existsSync(binaryPath)) {
     throw new Error(
