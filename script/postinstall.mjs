@@ -77,6 +77,10 @@ const installBinary = async () => {
 };
 
 try {
+  if (process.env.CI) {
+    console.log("CI detected, skipping binary download.");
+    process.exit(0);
+  }
   const binaryPath = await installBinary();
   console.log(`opencode-worktree binary installed at: ${binaryPath}`);
 } catch (error) {
