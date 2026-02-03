@@ -10,7 +10,7 @@ import {
   type KeyEvent,
   type SelectOption,
 } from "@opentui/core";
-import updateNotifier from "update-notifier";
+import { checkForUpdate } from "./update-check.js";
 import { basename } from "node:path";
 import {
   createWorktree,
@@ -128,17 +128,17 @@ class WorktreeSelector {
 
     // Display version or update notification in title line
     if (this.pkg) {
-      const notifier = updateNotifier({ pkg: this.pkg });
+      const updateInfo = checkForUpdate(this.pkg);
 
       let noticeContent: string;
       let noticeColor: string;
 
-      if (notifier.update) {
+      if (updateInfo?.hasUpdate) {
         // Update available
-        noticeContent = `Update: ${notifier.update.current} → ${notifier.update.latest} (npm i -g)`;
+        noticeContent = `Update: ${updateInfo.current} → ${updateInfo.latest} (npm i -g)`;
         noticeColor = "#F59E0B"; // Amber
       } else {
-        // On latest version
+        // On latest version (or no cache yet)
         noticeContent = `v${this.pkg.version}`;
         noticeColor = "#64748B"; // Subtle gray
       }
@@ -1063,7 +1063,7 @@ class WorktreeSelector {
     const branchDisplay = worktree.branch || basename(worktree.path);
 
     // Build dialog title
-    const title = "DELETE WORKTREE";
+    const title = `Remove: ${branchDisplay}`;
 
     this.confirmContainer = new BoxRenderable(this.renderer, {
       id: "confirm-container",
@@ -1071,30 +1071,18 @@ class WorktreeSelector {
       left: 2,
       top: 3,
       width: 76,
-      height: isDirty ? 12 : 10,
+      height: isDirty ? 10 : 8,
       borderStyle: "single",
-      borderColor: "#EF4444",
+      borderColor: "#F59E0B",
       title,
       titleAlignment: "center",
-      backgroundColor: "#1C1917",
+      backgroundColor: "#0F172A",
       border: true,
     });
     this.renderer.root.add(this.confirmContainer);
 
-    // Branch name prominently displayed
-    let yOffset = 1;
-    const branchHeader = new TextRenderable(this.renderer, {
-      id: "confirm-branch",
-      position: "absolute",
-      left: 1,
-      top: yOffset,
-      content: `Branch: ${branchDisplay}`,
-      fg: "#FBBF24",
-    });
-    this.confirmContainer.add(branchHeader);
-    yOffset += 2;
-
     // Warning for dirty worktree
+    let yOffset = 1;
     if (isDirty) {
       const warningText = new TextRenderable(this.renderer, {
         id: "confirm-warning",
@@ -1102,7 +1090,7 @@ class WorktreeSelector {
         left: 1,
         top: yOffset,
         content: "⚠ This worktree has uncommitted changes!",
-        fg: "#EF4444",
+        fg: "#F59E0B",
       });
       this.confirmContainer.add(warningText);
       yOffset += 2;
@@ -1114,7 +1102,7 @@ class WorktreeSelector {
       left: 1,
       top: yOffset,
       content: `Path: ${worktree.path}`,
-      fg: "#A8A29E",
+      fg: "#94A3B8",
     });
     this.confirmContainer.add(pathText);
     yOffset += 2;
@@ -1146,13 +1134,13 @@ class WorktreeSelector {
       width: 72,
       height: 4,
       options,
-      backgroundColor: "#1C1917",
-      focusedBackgroundColor: "#292524",
-      selectedBackgroundColor: "#44403C",
-      textColor: "#E7E5E4",
-      selectedTextColor: "#F87171",
-      descriptionColor: "#A8A29E",
-      selectedDescriptionColor: "#E7E5E4",
+      backgroundColor: "#0F172A",
+      focusedBackgroundColor: "#1E293B",
+      selectedBackgroundColor: "#1E3A5F",
+      textColor: "#E2E8F0",
+      selectedTextColor: "#38BDF8",
+      descriptionColor: "#94A3B8",
+      selectedDescriptionColor: "#E2E8F0",
       showDescription: true,
       wrapSelection: true,
     });
@@ -1191,6 +1179,17 @@ class WorktreeSelector {
       this.confirmContainer = null;
       this.confirmSelect = null;
     }
+
+    // Restore original title and colors (in case we came from delete mode)
+    this.title.content = "OPENCODE WORKTREES";
+    this.title.fg = "#E2E8F0";
+    this.selectElement.backgroundColor = "#0F172A";
+    this.selectElement.focusedBackgroundColor = "#1E293B";
+    this.selectElement.selectedBackgroundColor = "#1E3A5F";
+    this.selectElement.textColor = "#E2E8F0";
+    this.selectElement.selectedTextColor = "#38BDF8";
+    this.selectElement.descriptionColor = "#94A3B8";
+    this.selectElement.selectedDescriptionColor = "#E2E8F0";
 
     this.selectElement.visible = true;
     this.instructions.content =
@@ -1283,8 +1282,21 @@ class WorktreeSelector {
     this.isSelectingForDelete = true;
     this.selectedForDelete.clear();
 
-    // Rebuild options to show checkboxes
-    this.selectElement.options = this.buildOptions(worktrees);
+    // Change title to indicate delete mode
+    this.title.content = "DELETE WORKTREES";
+    this.title.fg = "#EF4444"; // Red
+
+    // Change select element colors to danger theme
+    this.selectElement.backgroundColor = "#1C1917";
+    this.selectElement.focusedBackgroundColor = "#292524";
+    this.selectElement.selectedBackgroundColor = "#44403C";
+    this.selectElement.textColor = "#E7E5E4";
+    this.selectElement.selectedTextColor = "#F87171";
+    this.selectElement.descriptionColor = "#A8A29E";
+    this.selectElement.selectedDescriptionColor = "#E7E5E4";
+
+    // Rebuild options to show checkboxes (only deletable worktrees)
+    this.selectElement.options = this.buildOptions(deletableWorktrees);
     this.instructions.content =
       "Enter toggle selection • d confirm delete • Esc cancel";
     this.setStatus("Select worktrees to delete, then press 'd' to confirm.", "info");
@@ -1294,6 +1306,20 @@ class WorktreeSelector {
   private exitSelectMode(): void {
     this.isSelectingForDelete = false;
     this.selectedForDelete.clear();
+
+    // Restore original title
+    this.title.content = "OPENCODE WORKTREES";
+    this.title.fg = "#E2E8F0";
+
+    // Restore original select element colors
+    this.selectElement.backgroundColor = "#0F172A";
+    this.selectElement.focusedBackgroundColor = "#1E293B";
+    this.selectElement.selectedBackgroundColor = "#1E3A5F";
+    this.selectElement.textColor = "#E2E8F0";
+    this.selectElement.selectedTextColor = "#38BDF8";
+    this.selectElement.descriptionColor = "#94A3B8";
+    this.selectElement.selectedDescriptionColor = "#E2E8F0";
+
     this.loadWorktrees();
     this.instructions.content =
       "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
@@ -1320,10 +1346,13 @@ class WorktreeSelector {
       this.selectedForDelete.add(worktree.path);
     }
 
-    // Rebuild options to update checkboxes
+    // Rebuild options to update checkboxes (only deletable worktrees)
     if (this.repoRoot) {
       const worktrees = listWorktrees(this.repoRoot);
-      this.selectElement.options = this.buildOptions(worktrees);
+      const deletableWorktrees = worktrees.filter(
+        (wt) => !isMainWorktree(this.repoRoot!, wt.path)
+      );
+      this.selectElement.options = this.buildOptions(deletableWorktrees);
       // Restore selection index
       this.selectElement.setSelectedIndex(selectedIndex);
     }
@@ -1369,7 +1398,7 @@ class WorktreeSelector {
     const hasDirty = dirtyWorktrees.length > 0;
 
     const count = worktrees.length;
-    const title = `DELETE ${count} WORKTREE${count === 1 ? "" : "S"}`;
+    const title = `Delete ${count} worktree${count === 1 ? "" : "s"}`;
 
     this.confirmContainer = new BoxRenderable(this.renderer, {
       id: "confirm-container",
@@ -1377,35 +1406,17 @@ class WorktreeSelector {
       left: 2,
       top: 3,
       width: 76,
-      height: hasDirty ? 14 : 12,
+      height: hasDirty ? 12 : 10,
       borderStyle: "single",
-      borderColor: "#EF4444",
+      borderColor: "#F59E0B",
       title,
       titleAlignment: "center",
-      backgroundColor: "#1C1917",
+      backgroundColor: "#0F172A",
       border: true,
     });
     this.renderer.root.add(this.confirmContainer);
 
     let yOffset = 1;
-
-    // List branches to be deleted prominently
-    const branchNames = worktrees
-      .map((wt) => wt.branch || basename(wt.path))
-      .slice(0, 3);
-    const displayList =
-      branchNames.join(", ") + (worktrees.length > 3 ? `, +${worktrees.length - 3} more` : "");
-
-    const branchHeader = new TextRenderable(this.renderer, {
-      id: "confirm-branches",
-      position: "absolute",
-      left: 1,
-      top: yOffset,
-      content: `Branches: ${displayList}`,
-      fg: "#FBBF24",
-    });
-    this.confirmContainer.add(branchHeader);
-    yOffset += 2;
 
     // Warning for dirty worktrees
     if (hasDirty) {
@@ -1415,22 +1426,28 @@ class WorktreeSelector {
         left: 1,
         top: yOffset,
         content: `⚠ ${dirtyWorktrees.length} worktree${dirtyWorktrees.length === 1 ? " has" : "s have"} uncommitted changes!`,
-        fg: "#EF4444",
+        fg: "#F59E0B",
       });
       this.confirmContainer.add(warningText);
       yOffset += 2;
     }
 
-    // Info text
-    const infoText = new TextRenderable(this.renderer, {
-      id: "confirm-info",
+    // List worktrees to be deleted
+    const branchNames = worktrees
+      .map((wt) => wt.branch || basename(wt.path))
+      .slice(0, 3);
+    const displayList =
+      branchNames.join(", ") + (worktrees.length > 3 ? `, +${worktrees.length - 3} more` : "");
+
+    const listText = new TextRenderable(this.renderer, {
+      id: "confirm-list",
       position: "absolute",
       left: 1,
       top: yOffset,
-      content: "This will remove worktree directories from disk.",
-      fg: "#A8A29E",
+      content: `Worktrees: ${displayList}`,
+      fg: "#94A3B8",
     });
-    this.confirmContainer.add(infoText);
+    this.confirmContainer.add(listText);
     yOffset += 2;
 
     // Build options
@@ -1460,13 +1477,13 @@ class WorktreeSelector {
       width: 72,
       height: 4,
       options,
-      backgroundColor: "#1C1917",
-      focusedBackgroundColor: "#292524",
-      selectedBackgroundColor: "#44403C",
-      textColor: "#E7E5E4",
-      selectedTextColor: "#F87171",
-      descriptionColor: "#A8A29E",
-      selectedDescriptionColor: "#E7E5E4",
+      backgroundColor: "#0F172A",
+      focusedBackgroundColor: "#1E293B",
+      selectedBackgroundColor: "#1E3A5F",
+      textColor: "#E2E8F0",
+      selectedTextColor: "#38BDF8",
+      descriptionColor: "#94A3B8",
+      selectedDescriptionColor: "#E2E8F0",
       showDescription: true,
       wrapSelection: true,
     });
