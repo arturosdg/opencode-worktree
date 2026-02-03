@@ -1063,7 +1063,7 @@ class WorktreeSelector {
     const branchDisplay = worktree.branch || basename(worktree.path);
 
     // Build dialog title
-    const title = `Remove: ${branchDisplay}`;
+    const title = "DELETE WORKTREE";
 
     this.confirmContainer = new BoxRenderable(this.renderer, {
       id: "confirm-container",
@@ -1071,18 +1071,30 @@ class WorktreeSelector {
       left: 2,
       top: 3,
       width: 76,
-      height: isDirty ? 10 : 8,
+      height: isDirty ? 12 : 10,
       borderStyle: "single",
-      borderColor: "#F59E0B",
+      borderColor: "#EF4444",
       title,
       titleAlignment: "center",
-      backgroundColor: "#0F172A",
+      backgroundColor: "#1C1917",
       border: true,
     });
     this.renderer.root.add(this.confirmContainer);
 
-    // Warning for dirty worktree
+    // Branch name prominently displayed
     let yOffset = 1;
+    const branchHeader = new TextRenderable(this.renderer, {
+      id: "confirm-branch",
+      position: "absolute",
+      left: 1,
+      top: yOffset,
+      content: `Branch: ${branchDisplay}`,
+      fg: "#FBBF24",
+    });
+    this.confirmContainer.add(branchHeader);
+    yOffset += 2;
+
+    // Warning for dirty worktree
     if (isDirty) {
       const warningText = new TextRenderable(this.renderer, {
         id: "confirm-warning",
@@ -1090,7 +1102,7 @@ class WorktreeSelector {
         left: 1,
         top: yOffset,
         content: "⚠ This worktree has uncommitted changes!",
-        fg: "#F59E0B",
+        fg: "#EF4444",
       });
       this.confirmContainer.add(warningText);
       yOffset += 2;
@@ -1102,7 +1114,7 @@ class WorktreeSelector {
       left: 1,
       top: yOffset,
       content: `Path: ${worktree.path}`,
-      fg: "#94A3B8",
+      fg: "#A8A29E",
     });
     this.confirmContainer.add(pathText);
     yOffset += 2;
@@ -1134,13 +1146,13 @@ class WorktreeSelector {
       width: 72,
       height: 4,
       options,
-      backgroundColor: "#0F172A",
-      focusedBackgroundColor: "#1E293B",
-      selectedBackgroundColor: "#1E3A5F",
-      textColor: "#E2E8F0",
-      selectedTextColor: "#38BDF8",
-      descriptionColor: "#94A3B8",
-      selectedDescriptionColor: "#E2E8F0",
+      backgroundColor: "#1C1917",
+      focusedBackgroundColor: "#292524",
+      selectedBackgroundColor: "#44403C",
+      textColor: "#E7E5E4",
+      selectedTextColor: "#F87171",
+      descriptionColor: "#A8A29E",
+      selectedDescriptionColor: "#E7E5E4",
       showDescription: true,
       wrapSelection: true,
     });
@@ -1357,7 +1369,7 @@ class WorktreeSelector {
     const hasDirty = dirtyWorktrees.length > 0;
 
     const count = worktrees.length;
-    const title = `Delete ${count} worktree${count === 1 ? "" : "s"}`;
+    const title = `DELETE ${count} WORKTREE${count === 1 ? "" : "S"}`;
 
     this.confirmContainer = new BoxRenderable(this.renderer, {
       id: "confirm-container",
@@ -1365,17 +1377,35 @@ class WorktreeSelector {
       left: 2,
       top: 3,
       width: 76,
-      height: hasDirty ? 12 : 10,
+      height: hasDirty ? 14 : 12,
       borderStyle: "single",
-      borderColor: "#F59E0B",
+      borderColor: "#EF4444",
       title,
       titleAlignment: "center",
-      backgroundColor: "#0F172A",
+      backgroundColor: "#1C1917",
       border: true,
     });
     this.renderer.root.add(this.confirmContainer);
 
     let yOffset = 1;
+
+    // List branches to be deleted prominently
+    const branchNames = worktrees
+      .map((wt) => wt.branch || basename(wt.path))
+      .slice(0, 3);
+    const displayList =
+      branchNames.join(", ") + (worktrees.length > 3 ? `, +${worktrees.length - 3} more` : "");
+
+    const branchHeader = new TextRenderable(this.renderer, {
+      id: "confirm-branches",
+      position: "absolute",
+      left: 1,
+      top: yOffset,
+      content: `Branches: ${displayList}`,
+      fg: "#FBBF24",
+    });
+    this.confirmContainer.add(branchHeader);
+    yOffset += 2;
 
     // Warning for dirty worktrees
     if (hasDirty) {
@@ -1385,28 +1415,22 @@ class WorktreeSelector {
         left: 1,
         top: yOffset,
         content: `⚠ ${dirtyWorktrees.length} worktree${dirtyWorktrees.length === 1 ? " has" : "s have"} uncommitted changes!`,
-        fg: "#F59E0B",
+        fg: "#EF4444",
       });
       this.confirmContainer.add(warningText);
       yOffset += 2;
     }
 
-    // List worktrees to be deleted
-    const branchNames = worktrees
-      .map((wt) => wt.branch || basename(wt.path))
-      .slice(0, 3);
-    const displayList =
-      branchNames.join(", ") + (worktrees.length > 3 ? `, +${worktrees.length - 3} more` : "");
-
-    const listText = new TextRenderable(this.renderer, {
-      id: "confirm-list",
+    // Info text
+    const infoText = new TextRenderable(this.renderer, {
+      id: "confirm-info",
       position: "absolute",
       left: 1,
       top: yOffset,
-      content: `Worktrees: ${displayList}`,
-      fg: "#94A3B8",
+      content: "This will remove worktree directories from disk.",
+      fg: "#A8A29E",
     });
-    this.confirmContainer.add(listText);
+    this.confirmContainer.add(infoText);
     yOffset += 2;
 
     // Build options
@@ -1436,13 +1460,13 @@ class WorktreeSelector {
       width: 72,
       height: 4,
       options,
-      backgroundColor: "#0F172A",
-      focusedBackgroundColor: "#1E293B",
-      selectedBackgroundColor: "#1E3A5F",
-      textColor: "#E2E8F0",
-      selectedTextColor: "#38BDF8",
-      descriptionColor: "#94A3B8",
-      selectedDescriptionColor: "#E2E8F0",
+      backgroundColor: "#1C1917",
+      focusedBackgroundColor: "#292524",
+      selectedBackgroundColor: "#44403C",
+      textColor: "#E7E5E4",
+      selectedTextColor: "#F87171",
+      descriptionColor: "#A8A29E",
+      selectedDescriptionColor: "#E7E5E4",
       showDescription: true,
       wrapSelection: true,
     });
