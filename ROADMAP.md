@@ -6,13 +6,16 @@
 
 - [x] **Delete worktrees** - Remove worktrees directly from the TUI with confirmation prompt
 - [x] **Unlink worktrees** - Remove worktree directory but keep branch for later use
+- [x] **Multi-select delete mode** - Press `d` to enter selection mode, use Enter to toggle worktrees for deletion, confirm to batch delete
 - [ ] **Prune stale worktrees** - Clean up worktrees whose branches have been deleted
 
 ### UX Improvements
 
-- [ ] **Worktree metadata display** - Show branch name, last commit date, dirty status, ahead/behind remote
-- [ ] **Color coding** - Highlight dirty worktrees, stale branches, or the main worktree
+- [x] **Worktree metadata display** - Show branch name, last commit date, dirty status, ahead/behind remote
+- [x] **Color coding** - Highlight dirty worktrees, stale branches, or the main worktree
 - [x] **Keyboard shortcuts help** - Show available commands at the bottom of the screen
+- [x] **Open in file manager** - Press `o` to open worktree folder in Finder/Explorer
+- [x] **Preselect new worktree** - After creating a worktree, return to list with new worktree preselected
 
 ---
 
@@ -20,13 +23,10 @@
 
 ### Navigation
 
-- [ ] **Search/filter worktrees** - Type to filter when you have many worktrees
-- [ ] **Switch between worktrees** - Open a new terminal/tmux pane in the selected worktree instead of launching opencode
+- [ ] **Switch between worktrees** - Open a new terminal pane in the selected worktree instead of launching opencode
 
 ### Configuration
 
-- [ ] **Custom worktrees directory** - Allow specifying where new worktrees are created via config file or flag
-- [ ] **Default branch prefix** - Configure a prefix for new branches (e.g., `feature/`, `fix/`)
 - [ ] **Post-create hooks** - Run custom commands after creating a worktree (e.g., `npm install`)
 
 ---

@@ -17,11 +17,19 @@ export const resolveRepoRoot = (cwd: string): string | null => {
 export const parseWorktreeList = (output: string): WorktreeInfo[] => {
   const lines = output.split(/\r?\n/);
   const worktrees: WorktreeInfo[] = [];
-  let current: WorktreeInfo | null = null;
+  let current: Partial<WorktreeInfo> | null = null;
 
   const pushCurrent = (): void => {
     if (current?.path) {
-      worktrees.push(current);
+      worktrees.push({
+        path: current.path,
+        head: current.head || "",
+        branch: current.branch || null,
+        isDetached: current.isDetached || false,
+        isDirty: false,
+        isOnRemote: false,
+        lastModified: null,
+      });
     }
   };
 
@@ -71,7 +79,10 @@ export const listWorktrees = (cwd: string): WorktreeInfo[] => {
     stdio: ["ignore", "pipe", "ignore"],
     encoding: "utf8",
   });
-  return parseWorktreeList(output);
+  const worktrees = parseWorktreeList(output);
+  
+  // Enrich each worktree with metadata
+  return worktrees.map((wt) => enrichWorktreeInfo(repoRoot, wt));
 };
 
 export type CreateWorktreeResult =
@@ -131,6 +142,68 @@ export const hasUncommittedChanges = (worktreePath: string): boolean => {
     // If we can't check, assume it's clean to avoid blocking
     return false;
   }
+};
+
+/**
+ * Get the last commit date for a worktree
+ */
+export const getLastCommitDate = (worktreePath: string): Date | null => {
+  try {
+    const output = execFileSync(
+      "git",
+      ["log", "-1", "--format=%ci"],
+      {
+        cwd: worktreePath,
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8",
+      }
+    );
+    const dateStr = output.trim();
+    if (!dateStr) return null;
+    return new Date(dateStr);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Check if a branch exists on remote (origin)
+ */
+export const isBranchOnRemote = (
+  repoRoot: string,
+  branchName: string
+): boolean => {
+  try {
+    const output = execFileSync(
+      "git",
+      ["branch", "-r", "--list", `origin/${branchName}`],
+      {
+        cwd: repoRoot,
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8",
+      }
+    );
+    return output.trim().length > 0;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Enrich worktree info with metadata (dirty status, remote status, last modified)
+ */
+export const enrichWorktreeInfo = (
+  repoRoot: string,
+  worktree: WorktreeInfo
+): WorktreeInfo => {
+  return {
+    ...worktree,
+    isDirty: hasUncommittedChanges(worktree.path),
+    isOnRemote: worktree.branch
+      ? isBranchOnRemote(repoRoot, worktree.branch)
+      : false,
+    lastModified: getLastCommitDate(worktree.path),
+  };
 };
 
 /**

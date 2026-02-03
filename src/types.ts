@@ -3,4 +3,8 @@ export type WorktreeInfo = {
   head: string;
   branch: string | null;
   isDetached: boolean;
+  // Metadata
+  isDirty: boolean;
+  isOnRemote: boolean;
+  lastModified: Date | null;
 };
