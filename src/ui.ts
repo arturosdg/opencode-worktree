@@ -10,6 +10,7 @@ import {
   type KeyEvent,
   type SelectOption,
 } from "@opentui/core";
+import updateNotifier from "update-notifier";
 import { basename } from "node:path";
 import {
   createWorktree,
@@ -45,14 +46,22 @@ const CONFIRM_UNLINK_VALUE: ConfirmAction = "unlink";
 const CONFIRM_DELETE_VALUE: ConfirmAction = "delete";
 const CONFIRM_CANCEL_VALUE: ConfirmAction = "cancel";
 
-export const runApp = async (targetPath: string): Promise<void> => {
+export type PackageInfo = {
+  name: string;
+  version: string;
+};
+
+export const runApp = async (
+  targetPath: string,
+  pkg?: PackageInfo,
+): Promise<void> => {
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
     targetFps: 30,
   });
 
   renderer.setBackgroundColor("transparent");
-  new WorktreeSelector(renderer, targetPath);
+  new WorktreeSelector(renderer, targetPath, pkg);
 };
 
 class WorktreeSelector {
@@ -60,6 +69,7 @@ class WorktreeSelector {
   private statusText: TextRenderable;
   private instructions: TextRenderable;
   private title: TextRenderable;
+  private versionNotice: TextRenderable | null = null;
 
   private inputContainer: BoxRenderable | null = null;
   private branchInput: InputRenderable | null = null;
@@ -99,6 +109,7 @@ class WorktreeSelector {
   constructor(
     private renderer: CliRenderer,
     private targetPath: string,
+    private pkg?: PackageInfo,
   ) {
     // Load worktrees first to get initial options
     this.repoRoot = resolveRepoRoot(this.targetPath);
@@ -114,6 +125,34 @@ class WorktreeSelector {
       fg: "#E2E8F0",
     });
     this.renderer.root.add(this.title);
+
+    // Display version or update notification in title line
+    if (this.pkg) {
+      const notifier = updateNotifier({ pkg: this.pkg });
+
+      let noticeContent: string;
+      let noticeColor: string;
+
+      if (notifier.update) {
+        // Update available
+        noticeContent = `Update: ${notifier.update.current} → ${notifier.update.latest} (npm i -g)`;
+        noticeColor = "#F59E0B"; // Amber
+      } else {
+        // On latest version
+        noticeContent = `v${this.pkg.version}`;
+        noticeColor = "#64748B"; // Subtle gray
+      }
+
+      this.versionNotice = new TextRenderable(renderer, {
+        id: "version-notice",
+        position: "absolute",
+        left: 78 - noticeContent.length,
+        top: 1,
+        content: noticeContent,
+        fg: noticeColor,
+      });
+      this.renderer.root.add(this.versionNotice);
+    }
 
     this.selectElement = new SelectRenderable(renderer, {
       id: "worktree-selector",

@@ -1,6 +1,6 @@
 {
   "name": "opencode-worktree",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": false,
   "type": "module",
   "description": "TUI for managing git worktrees with opencode integration.",
@@ -48,6 +48,7 @@
   "devDependencies": {
     "@types/bun": "^1.2.0",
     "@types/node": "^24.2.0",
+    "@types/update-notifier": "^6.0.8",
     "typescript": "^5.9.3"
   }
 }

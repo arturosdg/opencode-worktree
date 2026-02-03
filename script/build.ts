@@ -107,6 +107,8 @@ const buildBinary = async (target: Target) => {
         OTUI_TREE_SITTER_WORKER_PATH: JSON.stringify(
           bunfsRoot + workerRelativePath,
         ),
+        __PACKAGE_VERSION__: JSON.stringify(version),
+        __PACKAGE_NAME__: JSON.stringify(packageName),
       },
     });
   } catch (error) {
