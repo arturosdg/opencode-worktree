@@ -4,6 +4,7 @@ import { join } from "node:path";
 export type Config = {
   postCreateHook?: string;
   openCommand?: string; // Custom command to open worktree folder (e.g., "webstorm", "code")
+  launchCommand?: string; // Custom command to launch instead of opencode (e.g., "cursor", "claude")
 };
 
 const CONFIG_FILENAME = ".opencode-worktree.json";
@@ -49,6 +50,10 @@ export const loadRepoConfig = (repoRoot: string): Config => {
 
     if (typeof parsed.openCommand === "string") {
       config.openCommand = parsed.openCommand;
+    }
+
+    if (typeof parsed.launchCommand === "string") {
+      config.launchCommand = parsed.launchCommand;
     }
 
     return config;

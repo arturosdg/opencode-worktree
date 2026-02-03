@@ -22,7 +22,7 @@ import {
   resolveRepoRoot,
   unlinkWorktree,
 } from "./git.js";
-import { isOpenCodeAvailable, launchOpenCode, openInFileManager } from "./opencode.js";
+import { isCommandAvailable, launchCommand, openInFileManager } from "./opencode.js";
 import { WorktreeInfo } from "./types.js";
 import { loadRepoConfig, saveRepoConfig, configExists, type Config } from "./config.js";
 import { runPostCreateHook, type HookResult } from "./hooks.js";
@@ -81,6 +81,7 @@ class WorktreeSelector {
 
   private opencodeAvailable = false;
   private repoRoot: string | null = null;
+  private repoConfig: Config = {};
   private isCreatingWorktree = false;
   private worktreeOptions: SelectOption[] = [];
 
@@ -103,7 +104,8 @@ class WorktreeSelector {
   private configContainer: BoxRenderable | null = null;
   private configHookInput: InputRenderable | null = null;
   private configOpenInput: InputRenderable | null = null;
-  private configActiveField: "hook" | "open" = "hook";
+  private configLaunchInput: InputRenderable | null = null;
+  private configActiveField: "hook" | "open" | "launch" = "hook";
   private isFirstTimeSetup = false;
 
   constructor(
@@ -113,7 +115,8 @@ class WorktreeSelector {
   ) {
     // Load worktrees first to get initial options
     this.repoRoot = resolveRepoRoot(this.targetPath);
-    this.opencodeAvailable = isOpenCodeAvailable();
+    this.repoConfig = this.repoRoot ? loadRepoConfig(this.repoRoot) : {};
+    this.opencodeAvailable = isCommandAvailable(this.repoConfig.launchCommand || "opencode");
     this.worktreeOptions = this.buildInitialOptions();
 
     this.title = new TextRenderable(renderer, {
@@ -308,14 +311,18 @@ class WorktreeSelector {
         return;
       }
       if (key.name === "tab") {
-        // Switch between fields
+        // Cycle between fields: hook -> open -> launch -> hook
         if (this.configActiveField === "hook") {
           this.configActiveField = "open";
           this.configHookInput?.blur();
           this.configOpenInput?.focus();
+        } else if (this.configActiveField === "open") {
+          this.configActiveField = "launch";
+          this.configOpenInput?.blur();
+          this.configLaunchInput?.focus();
         } else {
           this.configActiveField = "hook";
-          this.configOpenInput?.blur();
+          this.configLaunchInput?.blur();
           this.configHookInput?.focus();
         }
         this.renderer.requestRender();
@@ -388,13 +395,14 @@ class WorktreeSelector {
     }
 
     const worktree = value as WorktreeInfo;
+    const cmdName = this.repoConfig.launchCommand || "opencode";
     if (!this.opencodeAvailable) {
-      this.setStatus("opencode is not available on PATH.", "error");
+      this.setStatus(`${cmdName} is not available on PATH.`, "error");
       return;
     }
 
     this.cleanup(false);
-    launchOpenCode(worktree.path);
+    launchCommand(worktree.path, this.repoConfig.launchCommand);
   }
 
   private openWorktreeInFileManager(): void {
@@ -521,10 +529,10 @@ class WorktreeSelector {
         this.pendingWorktreePath = result.path;
         this.runHook(result.path, config.postCreateHook);
       } else {
-        // No hook, launch opencode directly
+        // No hook, launch command directly
         this.hideCreateWorktreeInput();
         this.cleanup(false);
-        launchOpenCode(result.path);
+        launchCommand(result.path, this.repoConfig.launchCommand);
       }
     } else {
       this.setStatus(`Failed to create worktree: ${result.error}`, "error");
@@ -610,12 +618,12 @@ class WorktreeSelector {
     this.setStatus("Hook completed successfully!", "success");
     this.renderer.requestRender();
 
-    // Brief delay to show success, then launch opencode
+    // Brief delay to show success, then launch command
     setTimeout(() => {
       this.hideHookOutput();
       if (this.pendingWorktreePath) {
         this.cleanup(false);
-        launchOpenCode(this.pendingWorktreePath);
+        launchCommand(this.pendingWorktreePath, this.repoConfig.launchCommand);
       }
     }, 1000);
   }
@@ -676,7 +684,7 @@ class WorktreeSelector {
     if (choice === "open" && this.pendingWorktreePath) {
       this.hideHookOutput();
       this.cleanup(false);
-      launchOpenCode(this.pendingWorktreePath);
+      launchCommand(this.pendingWorktreePath, this.repoConfig.launchCommand);
     } else {
       // Cancel - return to list
       this.hideHookOutput();
@@ -737,7 +745,7 @@ class WorktreeSelector {
       left: 2,
       top: 3,
       width: 76,
-      height: 12,
+      height: 15,
       borderStyle: "single",
       borderColor: "#38BDF8",
       title,
@@ -771,13 +779,13 @@ class WorktreeSelector {
     });
     this.configContainer.add(this.configHookInput);
 
-    // Open command field
+    // Open folder command field
     const openLabel = new TextRenderable(this.renderer, {
       id: "config-open-label",
       position: "absolute",
       left: 1,
       top: 4,
-      content: "Open folder command (e.g., webstorm, code):",
+      content: "Open folder command (e.g., code, webstorm):",
       fg: "#94A3B8",
     });
     this.configContainer.add(openLabel);
@@ -795,12 +803,36 @@ class WorktreeSelector {
     });
     this.configContainer.add(this.configOpenInput);
 
+    // Launch command field (instead of opencode)
+    const launchLabel = new TextRenderable(this.renderer, {
+      id: "config-launch-label",
+      position: "absolute",
+      left: 1,
+      top: 7,
+      content: "Launch command (e.g., cursor, claude, code):",
+      fg: "#94A3B8",
+    });
+    this.configContainer.add(launchLabel);
+
+    this.configLaunchInput = new InputRenderable(this.renderer, {
+      id: "config-launch-input",
+      position: "absolute",
+      left: 1,
+      top: 8,
+      width: 72,
+      placeholder: "opencode (default)",
+      value: existingConfig.launchCommand || "",
+      focusedBackgroundColor: "#1E293B",
+      backgroundColor: "#1E293B",
+    });
+    this.configContainer.add(this.configLaunchInput);
+
     // Help text
     const helpText = new TextRenderable(this.renderer, {
       id: "config-help",
       position: "absolute",
       left: 1,
-      top: 7,
+      top: 10,
       content: "Tab to switch fields • Leave empty to use defaults",
       fg: "#64748B",
     });
@@ -831,12 +863,16 @@ class WorktreeSelector {
     if (this.configOpenInput) {
       this.configOpenInput.blur();
     }
+    if (this.configLaunchInput) {
+      this.configLaunchInput.blur();
+    }
 
     if (this.configContainer) {
       this.renderer.root.remove(this.configContainer.id);
       this.configContainer = null;
       this.configHookInput = null;
       this.configOpenInput = null;
+      this.configLaunchInput = null;
     }
 
     this.selectElement.visible = true;
@@ -859,6 +895,7 @@ class WorktreeSelector {
 
     const hookValue = (this.configHookInput?.value || "").trim();
     const openValue = (this.configOpenInput?.value || "").trim();
+    const launchValue = (this.configLaunchInput?.value || "").trim();
     const config: Config = {};
 
     if (hookValue) {
@@ -867,13 +904,24 @@ class WorktreeSelector {
     if (openValue) {
       config.openCommand = openValue;
     }
+    if (launchValue) {
+      config.launchCommand = launchValue;
+    }
 
     const success = saveRepoConfig(this.repoRoot, config);
 
     if (success) {
+      // Update the in-memory config
+      this.repoConfig = config;
+      
+      // Re-check if the launch command is available
+      const cmdName = config.launchCommand || "opencode";
+      this.opencodeAvailable = isCommandAvailable(cmdName);
+
       const changes: string[] = [];
       if (hookValue) changes.push(`hook: "${hookValue}"`);
       if (openValue) changes.push(`open: "${openValue}"`);
+      if (launchValue) changes.push(`launch: "${launchValue}"`);
       
       if (changes.length > 0) {
         this.setStatus(`Config saved: ${changes.join(", ")}`, "success");
@@ -922,9 +970,10 @@ class WorktreeSelector {
       );
     }
 
-    this.opencodeAvailable = isOpenCodeAvailable();
+    const cmdName = this.repoConfig.launchCommand || "opencode";
+    this.opencodeAvailable = isCommandAvailable(cmdName);
     if (!this.opencodeAvailable) {
-      this.setStatus("opencode is not available on PATH.", "error");
+      this.setStatus(`${cmdName} is not available on PATH.`, "error");
     }
 
     this.renderer.requestRender();

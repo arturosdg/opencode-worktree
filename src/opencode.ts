@@ -1,14 +1,30 @@
 import { spawn, spawnSync } from "node:child_process";
 
-export const isOpenCodeAvailable = (): boolean => {
-  const result = spawnSync("opencode", ["--version"], {
+/**
+ * Check if a command is available in PATH
+ */
+export const isCommandAvailable = (command: string): boolean => {
+  const result = spawnSync(command, ["--version"], {
     stdio: "ignore",
   });
   return result.status === 0;
 };
 
-export const launchOpenCode = (cwd: string): void => {
-  const child = spawn("opencode", [], {
+/**
+ * @deprecated Use isCommandAvailable instead
+ */
+export const isOpenCodeAvailable = (): boolean => {
+  return isCommandAvailable("opencode");
+};
+
+/**
+ * Launch a command in a worktree directory
+ * If customCommand is provided, uses that instead of opencode
+ */
+export const launchCommand = (cwd: string, customCommand?: string): void => {
+  const command = customCommand || "opencode";
+  
+  const child = spawn(command, [], {
     cwd,
     stdio: "inherit",
   });
@@ -17,6 +33,13 @@ export const launchOpenCode = (cwd: string): void => {
     const exitCode = typeof code === "number" ? code : 0;
     process.exit(exitCode);
   });
+};
+
+/**
+ * @deprecated Use launchCommand instead
+ */
+export const launchOpenCode = (cwd: string): void => {
+  launchCommand(cwd);
 };
 
 /**
