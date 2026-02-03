@@ -23,6 +23,8 @@ import {
 } from "./git.js";
 import { isOpenCodeAvailable, launchOpenCode, openInFileManager } from "./opencode.js";
 import { WorktreeInfo } from "./types.js";
+import { loadRepoConfig, saveRepoConfig, configExists, type Config } from "./config.js";
+import { runPostCreateHook, type HookResult } from "./hooks.js";
 
 type StatusLevel = "info" | "warning" | "error" | "success";
 
@@ -75,6 +77,22 @@ class WorktreeSelector {
   // Multi-select delete mode
   private isSelectingForDelete = false;
   private selectedForDelete: Set<string> = new Set(); // Set of worktree paths
+
+  // Hook execution state
+  private isRunningHook = false;
+  private hookOutputContainer: BoxRenderable | null = null;
+  private hookOutputText: TextRenderable | null = null;
+  private hookOutput: string[] = [];
+  private hookAbortFn: (() => void) | null = null;
+  private pendingWorktreePath: string | null = null;
+  private hookFailed = false;
+  private hookFailureSelect: SelectRenderable | null = null;
+
+  // Config editor state
+  private isEditingConfig = false;
+  private configContainer: BoxRenderable | null = null;
+  private configInput: InputRenderable | null = null;
+  private isFirstTimeSetup = false;
 
   constructor(
     private renderer: CliRenderer,
@@ -133,7 +151,7 @@ class WorktreeSelector {
       left: 2,
       top: 20,
       content:
-        "↑/↓ navigate • Enter open • o open folder • d delete • n new • r refresh • q quit",
+        "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit",
       fg: "#64748B",
     });
     this.renderer.root.add(this.instructions);
@@ -154,6 +172,11 @@ class WorktreeSelector {
     });
 
     this.selectElement.focus();
+
+    // Check for first-time setup
+    if (this.repoRoot && !configExists(this.repoRoot)) {
+      this.showFirstTimeSetup();
+    }
   }
 
   private getInitialStatusMessage(): string {
@@ -188,7 +211,33 @@ class WorktreeSelector {
 
   private handleKeypress(key: KeyEvent): void {
     if (key.ctrl && key.name === "c") {
+      // If running hook, abort it first
+      if (this.isRunningHook && this.hookAbortFn) {
+        this.hookAbortFn();
+        this.hookAbortFn = null;
+        this.setStatus("Hook aborted by user.", "warning");
+        this.hideHookOutput();
+        this.loadWorktrees(this.pendingWorktreePath || undefined);
+        this.selectElement.visible = true;
+        this.selectElement.focus();
+        this.instructions.content =
+          "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+        return;
+      }
       this.cleanup(true);
+      return;
+    }
+
+    // Handle hook running mode (only allow Ctrl+C which is handled above)
+    if (this.isRunningHook && !this.hookFailed) {
+      return;
+    }
+
+    // Handle hook failure mode - let the select handle input
+    if (this.isRunningHook && this.hookFailed) {
+      if (key.name === "escape") {
+        this.handleHookFailureChoice("cancel");
+      }
       return;
     }
 
@@ -203,6 +252,20 @@ class WorktreeSelector {
     if (this.isCreatingWorktree) {
       if (key.name === "escape") {
         this.hideCreateWorktreeInput();
+      }
+      return;
+    }
+
+    // Handle config editing mode
+    if (this.isEditingConfig) {
+      if (key.name === "escape") {
+        this.hideConfigEditor();
+        return;
+      }
+      if (key.name === "return") {
+        const value = this.configInput?.value || "";
+        this.handleConfigSave(value);
+        return;
       }
       return;
     }
@@ -254,6 +317,12 @@ class WorktreeSelector {
     // 'o' for opening worktree path in file manager
     if (key.name === "o") {
       this.openWorktreeInFileManager();
+      return;
+    }
+
+    // 'c' for editing config
+    if (key.name === "c") {
+      this.showConfigEditor();
       return;
     }
   }
@@ -358,7 +427,7 @@ class WorktreeSelector {
 
     this.selectElement.visible = true;
     this.instructions.content =
-      "↑/↓ navigate • Enter open • o open folder • d delete • n new • r refresh • q quit";
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
     this.selectElement.focus();
     this.loadWorktrees(selectWorktreePath);
   }
@@ -383,11 +452,338 @@ class WorktreeSelector {
 
     if (result.success) {
       this.setStatus(`Worktree created at ${result.path}`, "success");
-      // Return to list with the new worktree preselected
-      this.hideCreateWorktreeInput(result.path);
+      
+      // Check for post-create hook
+      const config = loadRepoConfig(this.repoRoot);
+      if (config.postCreateHook) {
+        this.pendingWorktreePath = result.path;
+        this.runHook(result.path, config.postCreateHook);
+      } else {
+        // No hook, launch opencode directly
+        this.hideCreateWorktreeInput();
+        this.cleanup(false);
+        launchOpenCode(result.path);
+      }
     } else {
       this.setStatus(`Failed to create worktree: ${result.error}`, "error");
     }
+  }
+
+  private runHook(worktreePath: string, command: string): void {
+    this.isRunningHook = true;
+    this.hookFailed = false;
+    this.hookOutput = [];
+
+    // Hide create input if still visible
+    if (this.inputContainer) {
+      this.renderer.root.remove(this.inputContainer.id);
+      this.inputContainer = null;
+      this.branchInput = null;
+    }
+    this.isCreatingWorktree = false;
+    this.selectElement.visible = false;
+
+    // Create hook output container
+    this.hookOutputContainer = new BoxRenderable(this.renderer, {
+      id: "hook-output-container",
+      position: "absolute",
+      left: 2,
+      top: 3,
+      width: 76,
+      height: 14,
+      borderStyle: "single",
+      borderColor: "#38BDF8",
+      title: `Running: ${command}`,
+      titleAlignment: "left",
+      backgroundColor: "#0F172A",
+      border: true,
+    });
+    this.renderer.root.add(this.hookOutputContainer);
+
+    this.hookOutputText = new TextRenderable(this.renderer, {
+      id: "hook-output-text",
+      position: "absolute",
+      left: 1,
+      top: 1,
+      content: "Starting...\n",
+      fg: "#94A3B8",
+    });
+    this.hookOutputContainer.add(this.hookOutputText);
+
+    this.instructions.content = "Hook running... (Ctrl+C to abort)";
+    this.setStatus(`Executing post-create hook...`, "info");
+    this.renderer.requestRender();
+
+    // Run the hook with streaming output
+    this.hookAbortFn = runPostCreateHook(worktreePath, command, {
+      onOutput: (data: string) => {
+        this.hookOutput.push(data);
+        this.updateHookOutput();
+      },
+      onComplete: (result: HookResult) => {
+        this.hookAbortFn = null;
+        if (result.success) {
+          this.onHookSuccess();
+        } else {
+          this.onHookFailure(result.exitCode);
+        }
+      },
+    });
+  }
+
+  private updateHookOutput(): void {
+    if (!this.hookOutputText) return;
+
+    // Join all output and take the last N lines that fit in the container
+    const fullOutput = this.hookOutput.join("");
+    const lines = fullOutput.split("\n");
+    const maxLines = 11; // Container height minus borders and padding
+    const visibleLines = lines.slice(-maxLines);
+    
+    this.hookOutputText.content = visibleLines.join("\n");
+    this.renderer.requestRender();
+  }
+
+  private onHookSuccess(): void {
+    this.setStatus("Hook completed successfully!", "success");
+    this.renderer.requestRender();
+
+    // Brief delay to show success, then launch opencode
+    setTimeout(() => {
+      this.hideHookOutput();
+      if (this.pendingWorktreePath) {
+        this.cleanup(false);
+        launchOpenCode(this.pendingWorktreePath);
+      }
+    }, 1000);
+  }
+
+  private onHookFailure(exitCode: number | null): void {
+    this.hookFailed = true;
+    const exitMsg = exitCode !== null ? ` (exit code: ${exitCode})` : "";
+    this.setStatus(`Hook failed${exitMsg}`, "error");
+
+    // Add failure options to the container
+    if (this.hookOutputContainer) {
+      this.hookFailureSelect = new SelectRenderable(this.renderer, {
+        id: "hook-failure-select",
+        position: "absolute",
+        left: 1,
+        top: 12,
+        width: 72,
+        height: 2,
+        options: [
+          {
+            name: "Open in opencode anyway",
+            description: "Launch opencode despite hook failure",
+            value: "open",
+          },
+          {
+            name: "Cancel",
+            description: "Return to worktree list",
+            value: "cancel",
+          },
+        ],
+        backgroundColor: "#0F172A",
+        focusedBackgroundColor: "#1E293B",
+        selectedBackgroundColor: "#1E3A5F",
+        textColor: "#E2E8F0",
+        selectedTextColor: "#38BDF8",
+        descriptionColor: "#94A3B8",
+        selectedDescriptionColor: "#E2E8F0",
+        showDescription: false,
+        wrapSelection: true,
+      });
+      this.hookOutputContainer.add(this.hookFailureSelect);
+
+      this.hookFailureSelect.on(
+        SelectRenderableEvents.ITEM_SELECTED,
+        (_index: number, option: SelectOption) => {
+          this.handleHookFailureChoice(option.value as string);
+        }
+      );
+
+      this.hookFailureSelect.focus();
+    }
+
+    this.instructions.content = "↑/↓ select • Enter confirm";
+    this.renderer.requestRender();
+  }
+
+  private handleHookFailureChoice(choice: string): void {
+    if (choice === "open" && this.pendingWorktreePath) {
+      this.hideHookOutput();
+      this.cleanup(false);
+      launchOpenCode(this.pendingWorktreePath);
+    } else {
+      // Cancel - return to list
+      this.hideHookOutput();
+      this.loadWorktrees(this.pendingWorktreePath || undefined);
+      this.selectElement.visible = true;
+      this.selectElement.focus();
+      this.instructions.content =
+        "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+    }
+  }
+
+  private hideHookOutput(): void {
+    this.isRunningHook = false;
+    this.hookFailed = false;
+    this.hookOutput = [];
+    this.pendingWorktreePath = null;
+
+    if (this.hookFailureSelect) {
+      this.hookFailureSelect.blur();
+      this.hookFailureSelect = null;
+    }
+
+    if (this.hookOutputContainer) {
+      this.renderer.root.remove(this.hookOutputContainer.id);
+      this.hookOutputContainer = null;
+      this.hookOutputText = null;
+    }
+  }
+
+  // ========== Config Editor Methods ==========
+
+  private showFirstTimeSetup(): void {
+    this.isFirstTimeSetup = true;
+    this.showConfigEditor();
+  }
+
+  private showConfigEditor(): void {
+    if (!this.repoRoot) {
+      this.setStatus("No git repository found.", "error");
+      return;
+    }
+
+    this.isEditingConfig = true;
+    this.selectElement.visible = false;
+    this.selectElement.blur();
+
+    // Load existing config to pre-fill
+    const existingConfig = loadRepoConfig(this.repoRoot);
+
+    const title = this.isFirstTimeSetup
+      ? "First-time Setup: Configure Post-create Hook"
+      : "Edit Post-create Hook";
+
+    this.configContainer = new BoxRenderable(this.renderer, {
+      id: "config-container",
+      position: "absolute",
+      left: 2,
+      top: 3,
+      width: 76,
+      height: 8,
+      borderStyle: "single",
+      borderColor: "#38BDF8",
+      title,
+      titleAlignment: "center",
+      backgroundColor: "#0F172A",
+      border: true,
+    });
+    this.renderer.root.add(this.configContainer);
+
+    const helpText = new TextRenderable(this.renderer, {
+      id: "config-help",
+      position: "absolute",
+      left: 1,
+      top: 1,
+      content: "Command to run after creating a worktree (e.g., npm install):",
+      fg: "#94A3B8",
+    });
+    this.configContainer.add(helpText);
+
+    const skipHint = new TextRenderable(this.renderer, {
+      id: "config-skip-hint",
+      position: "absolute",
+      left: 1,
+      top: 4,
+      content: "Leave empty to skip post-create hooks.",
+      fg: "#64748B",
+    });
+    this.configContainer.add(skipHint);
+
+    this.configInput = new InputRenderable(this.renderer, {
+      id: "config-hook-input",
+      position: "absolute",
+      left: 1,
+      top: 3,
+      width: 72,
+      placeholder: "npm install",
+      value: existingConfig.postCreateHook || "",
+      focusedBackgroundColor: "#1E293B",
+      backgroundColor: "#1E293B",
+    });
+    this.configContainer.add(this.configInput);
+
+    this.instructions.content = "Enter to save • Esc to cancel";
+    this.setStatus(
+      this.isFirstTimeSetup
+        ? "Welcome! Configure your post-create hook for this repository."
+        : "Edit the post-create hook command.",
+      "info"
+    );
+
+    // Delay focus to prevent the triggering keypress from being captured
+    setTimeout(() => {
+      this.configInput?.focus();
+      this.renderer.requestRender();
+    }, 0);
+  }
+
+  private hideConfigEditor(): void {
+    this.isEditingConfig = false;
+    this.isFirstTimeSetup = false;
+
+    if (this.configInput) {
+      this.configInput.blur();
+    }
+
+    if (this.configContainer) {
+      this.renderer.root.remove(this.configContainer.id);
+      this.configContainer = null;
+      this.configInput = null;
+    }
+
+    this.selectElement.visible = true;
+    this.instructions.content =
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+    
+    // Delay focus to prevent the Enter keypress from triggering a selection
+    setTimeout(() => {
+      this.selectElement.focus();
+      this.renderer.requestRender();
+    }, 0);
+  }
+
+  private handleConfigSave(hookCommand: string): void {
+    if (!this.repoRoot) {
+      this.setStatus("No git repository found.", "error");
+      this.hideConfigEditor();
+      return;
+    }
+
+    const trimmed = hookCommand.trim();
+    const config: Config = {};
+
+    if (trimmed) {
+      config.postCreateHook = trimmed;
+    }
+
+    const success = saveRepoConfig(this.repoRoot, config);
+
+    if (success) {
+      if (trimmed) {
+        this.setStatus(`Post-create hook saved: "${trimmed}"`, "success");
+      } else {
+        this.setStatus("Post-create hook cleared.", "success");
+      }
+    } else {
+      this.setStatus("Failed to save config.", "error");
+    }
+
+    this.hideConfigEditor();
   }
 
   private loadWorktrees(selectWorktreePath?: string): void {
@@ -685,7 +1081,7 @@ class WorktreeSelector {
 
     this.selectElement.visible = true;
     this.instructions.content =
-      "↑/↓ navigate • Enter open • o open folder • d delete • n new • r refresh • q quit";
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
     this.selectElement.focus();
     this.loadWorktrees();
   }
@@ -787,7 +1183,7 @@ class WorktreeSelector {
     this.selectedForDelete.clear();
     this.loadWorktrees();
     this.instructions.content =
-      "↑/↓ navigate • Enter open • o open folder • d delete • n new • r refresh • q quit";
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
     this.renderer.requestRender();
   }
 

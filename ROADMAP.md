@@ -21,13 +21,10 @@
 
 ## v0.3 - Enhanced Navigation & Configuration
 
-### Navigation
-
-- [ ] **Switch between worktrees** - Open a new terminal pane in the selected worktree instead of launching opencode
-
 ### Configuration
 
-- [ ] **Post-create hooks** - Run custom commands after creating a worktree (e.g., `npm install`)
+- [x] **Post-create hooks** - Run custom commands after creating a worktree (e.g., `npm install`) with streaming output and failure handling
+- [x] **Config editor** - Press `c` to edit configuration, with first-time setup prompt
 
 ---
 
