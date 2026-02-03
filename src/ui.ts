@@ -13,9 +13,12 @@ import {
 import { checkForUpdate } from "./update-check.js";
 import { basename } from "node:path";
 import {
+  checkoutBranch,
+  createBranchFromCommit,
   createWorktree,
   deleteWorktree,
   getDefaultWorktreesDir,
+  getHeadCommit,
   hasUncommittedChanges,
   isMainWorktree,
   listWorktrees,
@@ -24,7 +27,7 @@ import {
 } from "./git.js";
 import { isCommandAvailable, launchCommand, openInFileManager } from "./opencode.js";
 import { WorktreeInfo } from "./types.js";
-import { loadRepoConfig, saveRepoConfig, configExists, type Config } from "./config.js";
+import { loadRepoConfig, saveRepoConfig, type Config } from "./config.js";
 import { runPostCreateHook, type HookResult } from "./hooks.js";
 
 type StatusLevel = "info" | "warning" | "error" | "success";
@@ -106,7 +109,16 @@ class WorktreeSelector {
   private configOpenInput: InputRenderable | null = null;
   private configLaunchInput: InputRenderable | null = null;
   private configActiveField: "hook" | "open" | "launch" = "hook";
-  private isFirstTimeSetup = false;
+  private repoKey: string | null = null; // Normalized git remote URL for config lookup
+
+  // Branch creation state
+  private isCreatingBranch = false;
+  private branchCreateContainer: BoxRenderable | null = null;
+  private branchNameInput: InputRenderable | null = null;
+  private sourceWorktree: WorktreeInfo | null = null;
+  private pendingBranchName: string | null = null;
+  private isAskingCheckout = false;
+  private checkoutSelect: SelectRenderable | null = null;
 
   constructor(
     private renderer: CliRenderer,
@@ -115,7 +127,11 @@ class WorktreeSelector {
   ) {
     // Load worktrees first to get initial options
     this.repoRoot = resolveRepoRoot(this.targetPath);
-    this.repoConfig = this.repoRoot ? loadRepoConfig(this.repoRoot) : {};
+    if (this.repoRoot) {
+      const { config, repoKey } = loadRepoConfig(this.repoRoot);
+      this.repoConfig = config;
+      this.repoKey = repoKey;
+    }
     this.opencodeAvailable = isCommandAvailable(this.repoConfig.launchCommand || "opencode");
     this.worktreeOptions = this.buildInitialOptions();
 
@@ -195,7 +211,7 @@ class WorktreeSelector {
       left: 2,
       top: 20,
       content:
-        "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit",
+        "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit",
       fg: "#64748B",
     });
     this.renderer.root.add(this.instructions);
@@ -216,11 +232,6 @@ class WorktreeSelector {
     });
 
     this.selectElement.focus();
-
-    // Check for first-time setup
-    if (this.repoRoot && !configExists(this.repoRoot)) {
-      this.showFirstTimeSetup();
-    }
   }
 
   private getInitialStatusMessage(): string {
@@ -265,7 +276,7 @@ class WorktreeSelector {
         this.selectElement.visible = true;
         this.selectElement.focus();
         this.instructions.content =
-          "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+          "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
         return;
       }
       this.cleanup(true);
@@ -353,6 +364,24 @@ class WorktreeSelector {
       return;
     }
 
+    // Handle branch creation mode
+    if (this.isCreatingBranch) {
+      if (key.name === "escape") {
+        this.hideBranchCreateInput();
+        return;
+      }
+      return;
+    }
+
+    // Handle checkout confirmation mode
+    if (this.isAskingCheckout) {
+      if (key.name === "escape") {
+        this.hideCheckoutConfirm();
+        return;
+      }
+      return;
+    }
+
     if (key.name === "q" || key.name === "escape") {
       this.cleanup(true);
       return;
@@ -386,6 +415,12 @@ class WorktreeSelector {
       this.showConfigEditor();
       return;
     }
+
+    // 'b' for creating a new branch from selected worktree
+    if (key.name === "b") {
+      this.showBranchCreateInput();
+      return;
+    }
   }
 
   private handleSelection(value: SelectionValue): void {
@@ -412,9 +447,8 @@ class WorktreeSelector {
       return;
     }
 
-    // Load config to check for custom open command
-    const config = this.repoRoot ? loadRepoConfig(this.repoRoot) : {};
-    const customCommand = config.openCommand;
+    // Use the already-loaded config's openCommand
+    const customCommand = this.repoConfig.openCommand;
 
     const success = openInFileManager(worktree.path, customCommand);
     if (success) {
@@ -497,7 +531,7 @@ class WorktreeSelector {
 
     this.selectElement.visible = true;
     this.instructions.content =
-      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
     this.selectElement.focus();
     this.loadWorktrees(selectWorktreePath);
   }
@@ -523,11 +557,10 @@ class WorktreeSelector {
     if (result.success) {
       this.setStatus(`Worktree created at ${result.path}`, "success");
       
-      // Check for post-create hook
-      const config = loadRepoConfig(this.repoRoot);
-      if (config.postCreateHook) {
+      // Check for post-create hook (use already-loaded config)
+      if (this.repoConfig.postCreateHook) {
         this.pendingWorktreePath = result.path;
-        this.runHook(result.path, config.postCreateHook);
+        this.runHook(result.path, this.repoConfig.postCreateHook);
       } else {
         // No hook, launch command directly
         this.hideCreateWorktreeInput();
@@ -692,7 +725,7 @@ class WorktreeSelector {
       this.selectElement.visible = true;
       this.selectElement.focus();
       this.instructions.content =
-        "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+        "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
     }
   }
 
@@ -716,11 +749,6 @@ class WorktreeSelector {
 
   // ========== Config Editor Methods ==========
 
-  private showFirstTimeSetup(): void {
-    this.isFirstTimeSetup = true;
-    this.showConfigEditor();
-  }
-
   private showConfigEditor(): void {
     if (!this.repoRoot) {
       this.setStatus("No git repository found.", "error");
@@ -732,12 +760,18 @@ class WorktreeSelector {
     this.selectElement.visible = false;
     this.selectElement.blur();
 
-    // Load existing config to pre-fill
-    const existingConfig = loadRepoConfig(this.repoRoot);
-
-    const title = this.isFirstTimeSetup
-      ? "First-time Setup: Project Configuration"
-      : "Edit Project Configuration";
+    // Build title showing repo key
+    let title: string;
+    if (this.repoKey) {
+      // Truncate if too long for the box
+      const maxKeyLen = 50;
+      const displayKey = this.repoKey.length > maxKeyLen
+        ? "..." + this.repoKey.slice(-maxKeyLen + 3)
+        : this.repoKey;
+      title = `Config: ${displayKey}`;
+    } else {
+      title = "Config: [no remote]";
+    }
 
     this.configContainer = new BoxRenderable(this.renderer, {
       id: "config-container",
@@ -773,7 +807,7 @@ class WorktreeSelector {
       top: 2,
       width: 72,
       placeholder: "npm install",
-      value: existingConfig.postCreateHook || "",
+      value: this.repoConfig.postCreateHook || "",
       focusedBackgroundColor: "#1E293B",
       backgroundColor: "#1E293B",
     });
@@ -797,7 +831,7 @@ class WorktreeSelector {
       top: 5,
       width: 72,
       placeholder: "open (default)",
-      value: existingConfig.openCommand || "",
+      value: this.repoConfig.openCommand || "",
       focusedBackgroundColor: "#1E293B",
       backgroundColor: "#1E293B",
     });
@@ -821,30 +855,38 @@ class WorktreeSelector {
       top: 8,
       width: 72,
       placeholder: "opencode (default)",
-      value: existingConfig.launchCommand || "",
+      value: this.repoConfig.launchCommand || "",
       focusedBackgroundColor: "#1E293B",
       backgroundColor: "#1E293B",
     });
     this.configContainer.add(this.configLaunchInput);
 
-    // Help text
+    // Help text - show warning if no remote
+    let helpContent: string;
+    if (this.repoKey) {
+      helpContent = "Tab to switch fields • Leave empty to use defaults";
+    } else {
+      helpContent = "No remote - config won't be saved for this repo";
+    }
+
     const helpText = new TextRenderable(this.renderer, {
       id: "config-help",
       position: "absolute",
       left: 1,
       top: 10,
-      content: "Tab to switch fields • Leave empty to use defaults",
-      fg: "#64748B",
+      content: helpContent,
+      fg: this.repoKey ? "#64748B" : "#F59E0B",
     });
     this.configContainer.add(helpText);
 
     this.instructions.content = "Tab switch • Enter save • Esc cancel";
-    this.setStatus(
-      this.isFirstTimeSetup
-        ? "Welcome! Configure your project settings."
-        : "Edit project configuration.",
-      "info"
-    );
+    
+    // Show warning if no remote
+    if (this.repoKey) {
+      this.setStatus("Edit project configuration.", "info");
+    } else {
+      this.setStatus("Warning: No git remote. Config changes won't be saved.", "warning");
+    }
 
     // Delay focus to prevent the triggering keypress from being captured
     setTimeout(() => {
@@ -855,7 +897,6 @@ class WorktreeSelector {
 
   private hideConfigEditor(): void {
     this.isEditingConfig = false;
-    this.isFirstTimeSetup = false;
 
     if (this.configHookInput) {
       this.configHookInput.blur();
@@ -877,7 +918,7 @@ class WorktreeSelector {
 
     this.selectElement.visible = true;
     this.instructions.content =
-      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
     
     // Delay focus to prevent the Enter keypress from triggering a selection
     setTimeout(() => {
@@ -933,6 +974,279 @@ class WorktreeSelector {
     }
 
     this.hideConfigEditor();
+  }
+
+  // ========== Branch Creation Methods ==========
+
+  private showBranchCreateInput(): void {
+    const worktree = this.getSelectedWorktree();
+    if (!worktree) {
+      this.setStatus("Select a worktree to create a branch from.", "warning");
+      return;
+    }
+
+    if (!this.repoRoot) {
+      this.setStatus("No git repository found.", "error");
+      return;
+    }
+
+    this.isCreatingBranch = true;
+    this.sourceWorktree = worktree;
+    this.selectElement.visible = false;
+    this.selectElement.blur();
+
+    const sourceName = worktree.branch || basename(worktree.path);
+
+    this.branchCreateContainer = new BoxRenderable(this.renderer, {
+      id: "branch-create-container",
+      position: "absolute",
+      left: 2,
+      top: 3,
+      width: 76,
+      height: 7,
+      borderStyle: "single",
+      borderColor: "#38BDF8",
+      title: `New Branch from: ${sourceName}`,
+      titleAlignment: "center",
+      backgroundColor: "#0F172A",
+      border: true,
+    });
+    this.renderer.root.add(this.branchCreateContainer);
+
+    const inputLabel = new TextRenderable(this.renderer, {
+      id: "branch-name-label",
+      position: "absolute",
+      left: 1,
+      top: 1,
+      content: "Branch name:",
+      fg: "#E2E8F0",
+    });
+    this.branchCreateContainer.add(inputLabel);
+
+    this.branchNameInput = new InputRenderable(this.renderer, {
+      id: "branch-name-input",
+      position: "absolute",
+      left: 14,
+      top: 1,
+      width: 58,
+      placeholder: "feature/new-branch",
+      focusedBackgroundColor: "#1E293B",
+      backgroundColor: "#1E293B",
+    });
+    this.branchCreateContainer.add(this.branchNameInput);
+
+    const helpText = new TextRenderable(this.renderer, {
+      id: "branch-create-help",
+      position: "absolute",
+      left: 1,
+      top: 3,
+      content: `Branch will start from commit: ${worktree.head.slice(0, 8)}`,
+      fg: "#64748B",
+    });
+    this.branchCreateContainer.add(helpText);
+
+    this.branchNameInput.on(InputRenderableEvents.CHANGE, (value: string) => {
+      this.handleBranchCreate(value);
+    });
+
+    this.instructions.content = "Enter to create • Esc to cancel";
+    this.setStatus("Enter a name for the new branch.", "info");
+
+    this.branchNameInput.focus();
+    this.renderer.requestRender();
+  }
+
+  private hideBranchCreateInput(): void {
+    this.isCreatingBranch = false;
+    this.sourceWorktree = null;
+
+    if (this.branchNameInput) {
+      this.branchNameInput.blur();
+    }
+
+    if (this.branchCreateContainer) {
+      this.renderer.root.remove(this.branchCreateContainer.id);
+      this.branchCreateContainer = null;
+      this.branchNameInput = null;
+    }
+
+    this.selectElement.visible = true;
+    this.instructions.content =
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
+    this.selectElement.focus();
+    this.renderer.requestRender();
+  }
+
+  private handleBranchCreate(branchName: string): void {
+    const trimmed = branchName.trim();
+    if (!trimmed) {
+      this.setStatus("Branch name cannot be empty.", "error");
+      return;
+    }
+
+    if (!this.repoRoot || !this.sourceWorktree) {
+      this.setStatus("No source worktree selected.", "error");
+      return;
+    }
+
+    const commitHash = this.sourceWorktree.head;
+    if (!commitHash) {
+      this.setStatus("Could not determine source commit.", "error");
+      return;
+    }
+
+    this.setStatus(`Creating branch '${trimmed}'...`, "info");
+    this.renderer.requestRender();
+
+    const result = createBranchFromCommit(this.repoRoot, trimmed, commitHash);
+
+    if (result.success) {
+      this.pendingBranchName = trimmed;
+      // Hide the input and show checkout confirmation
+      if (this.branchNameInput) {
+        this.branchNameInput.blur();
+      }
+      if (this.branchCreateContainer) {
+        this.renderer.root.remove(this.branchCreateContainer.id);
+        this.branchCreateContainer = null;
+        this.branchNameInput = null;
+      }
+      this.isCreatingBranch = false;
+      
+      this.showCheckoutConfirm(trimmed);
+    } else {
+      this.setStatus(`Failed to create branch: ${result.error}`, "error");
+    }
+  }
+
+  private showCheckoutConfirm(branchName: string): void {
+    if (!this.sourceWorktree) {
+      this.setStatus("No source worktree.", "error");
+      this.hideBranchCreateInput();
+      return;
+    }
+
+    this.isAskingCheckout = true;
+
+    const sourceName = this.sourceWorktree.branch || basename(this.sourceWorktree.path);
+
+    this.branchCreateContainer = new BoxRenderable(this.renderer, {
+      id: "checkout-confirm-container",
+      position: "absolute",
+      left: 2,
+      top: 3,
+      width: 76,
+      height: 8,
+      borderStyle: "single",
+      borderColor: "#10B981",
+      title: `Branch '${branchName}' Created`,
+      titleAlignment: "center",
+      backgroundColor: "#0F172A",
+      border: true,
+    });
+    this.renderer.root.add(this.branchCreateContainer);
+
+    const infoText = new TextRenderable(this.renderer, {
+      id: "checkout-info",
+      position: "absolute",
+      left: 1,
+      top: 1,
+      content: `Checkout '${branchName}' in worktree '${sourceName}'?`,
+      fg: "#E2E8F0",
+    });
+    this.branchCreateContainer.add(infoText);
+
+    this.checkoutSelect = new SelectRenderable(this.renderer, {
+      id: "checkout-select",
+      position: "absolute",
+      left: 1,
+      top: 3,
+      width: 72,
+      height: 3,
+      options: [
+        {
+          name: "Yes, checkout the new branch",
+          description: "Switch this worktree to the new branch",
+          value: "checkout",
+        },
+        {
+          name: "No, keep current branch",
+          description: "Branch created but worktree stays on current branch",
+          value: "keep",
+        },
+      ],
+      backgroundColor: "#0F172A",
+      focusedBackgroundColor: "#1E293B",
+      selectedBackgroundColor: "#1E3A5F",
+      textColor: "#E2E8F0",
+      selectedTextColor: "#38BDF8",
+      descriptionColor: "#94A3B8",
+      selectedDescriptionColor: "#E2E8F0",
+      showDescription: true,
+      wrapSelection: true,
+    });
+    this.branchCreateContainer.add(this.checkoutSelect);
+
+    this.checkoutSelect.on(
+      SelectRenderableEvents.ITEM_SELECTED,
+      (_index: number, option: SelectOption) => {
+        this.handleCheckoutChoice(option.value as string);
+      }
+    );
+
+    this.instructions.content = "↑/↓ select • Enter confirm • Esc cancel";
+    this.setStatus(`Branch '${branchName}' created successfully!`, "success");
+
+    this.checkoutSelect.focus();
+    this.renderer.requestRender();
+  }
+
+  private hideCheckoutConfirm(): void {
+    this.isAskingCheckout = false;
+    this.pendingBranchName = null;
+    this.sourceWorktree = null;
+
+    if (this.checkoutSelect) {
+      this.checkoutSelect.blur();
+      this.checkoutSelect = null;
+    }
+
+    if (this.branchCreateContainer) {
+      this.renderer.root.remove(this.branchCreateContainer.id);
+      this.branchCreateContainer = null;
+    }
+
+    this.selectElement.visible = true;
+    this.instructions.content =
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
+    this.selectElement.focus();
+    this.loadWorktrees();
+    this.renderer.requestRender();
+  }
+
+  private handleCheckoutChoice(choice: string): void {
+    if (choice === "checkout" && this.pendingBranchName && this.sourceWorktree) {
+      this.setStatus(`Checking out '${this.pendingBranchName}'...`, "info");
+      this.renderer.requestRender();
+
+      const result = checkoutBranch(this.sourceWorktree.path, this.pendingBranchName);
+
+      if (result.success) {
+        this.setStatus(
+          `Switched to branch '${this.pendingBranchName}'.`,
+          "success"
+        );
+      } else {
+        this.setStatus(`Failed to checkout: ${result.error}`, "error");
+      }
+    } else {
+      this.setStatus(
+        `Branch '${this.pendingBranchName}' created (not checked out).`,
+        "success"
+      );
+    }
+
+    this.hideCheckoutConfirm();
   }
 
   private loadWorktrees(selectWorktreePath?: string): void {
@@ -1242,7 +1556,7 @@ class WorktreeSelector {
 
     this.selectElement.visible = true;
     this.instructions.content =
-      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
     this.selectElement.focus();
     this.loadWorktrees();
   }
@@ -1371,7 +1685,7 @@ class WorktreeSelector {
 
     this.loadWorktrees();
     this.instructions.content =
-      "↑/↓ navigate • Enter open • o folder • d delete • n new • c config • q quit";
+      "↑/↓ navigate • Enter open • o folder • d delete • n new • b branch • c config • q quit";
     this.renderer.requestRender();
   }
 

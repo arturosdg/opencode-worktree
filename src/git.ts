@@ -1,6 +1,71 @@
 import { execFileSync } from "node:child_process";
 import { WorktreeInfo } from "./types.js";
 
+/**
+ * Get the remote origin URL for a repository
+ */
+export const getRemoteOriginUrl = (repoRoot: string): string | null => {
+  try {
+    const output = execFileSync("git", ["remote", "get-url", "origin"], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    });
+    return output.trim() || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Normalize a git remote URL to a consistent key format
+ * Examples:
+ *   git@github.com:user/repo.git → github.com/user/repo
+ *   https://github.com/user/repo.git → github.com/user/repo
+ *   ssh://git@github.com/user/repo.git → github.com/user/repo
+ */
+export const normalizeRemoteUrl = (url: string): string => {
+  let normalized = url.trim();
+
+  // Remove .git suffix
+  if (normalized.endsWith(".git")) {
+    normalized = normalized.slice(0, -4);
+  }
+
+  // Handle SSH format: git@github.com:user/repo
+  const sshMatch = normalized.match(/^git@([^:]+):(.+)$/);
+  if (sshMatch) {
+    return `${sshMatch[1]}/${sshMatch[2]}`;
+  }
+
+  // Handle SSH URL format: ssh://git@github.com/user/repo
+  const sshUrlMatch = normalized.match(/^ssh:\/\/git@([^/]+)\/(.+)$/);
+  if (sshUrlMatch) {
+    return `${sshUrlMatch[1]}/${sshUrlMatch[2]}`;
+  }
+
+  // Handle HTTPS format: https://github.com/user/repo
+  const httpsMatch = normalized.match(/^https?:\/\/([^/]+)\/(.+)$/);
+  if (httpsMatch) {
+    return `${httpsMatch[1]}/${httpsMatch[2]}`;
+  }
+
+  // Fallback: return as-is (shouldn't happen for valid URLs)
+  return normalized;
+};
+
+/**
+ * Get the normalized repo key for a repository (for config lookup)
+ * Returns null if no remote origin is configured
+ */
+export const getRepoKey = (repoRoot: string): string | null => {
+  const remoteUrl = getRemoteOriginUrl(repoRoot);
+  if (!remoteUrl) {
+    return null;
+  }
+  return normalizeRemoteUrl(remoteUrl);
+};
+
 export const resolveRepoRoot = (cwd: string): string | null => {
   try {
     const output = execFileSync("git", ["rev-parse", "--show-toplevel"], {
@@ -278,5 +343,71 @@ export const deleteWorktree = (
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     return { success: false, error, step: "branch" };
+  }
+};
+
+export type CreateBranchResult =
+  | { success: true }
+  | { success: false; error: string };
+
+/**
+ * Create a new branch from a specific commit
+ */
+export const createBranchFromCommit = (
+  repoRoot: string,
+  branchName: string,
+  commitHash: string,
+): CreateBranchResult => {
+  try {
+    execFileSync("git", ["branch", branchName, commitHash], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    return { success: true };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    return { success: false, error };
+  }
+};
+
+export type CheckoutResult =
+  | { success: true }
+  | { success: false; error: string };
+
+/**
+ * Checkout a branch in a specific worktree
+ * Note: This changes the branch the worktree is tracking
+ */
+export const checkoutBranch = (
+  worktreePath: string,
+  branchName: string,
+): CheckoutResult => {
+  try {
+    execFileSync("git", ["checkout", branchName], {
+      cwd: worktreePath,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    });
+    return { success: true };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    return { success: false, error };
+  }
+};
+
+/**
+ * Get the current HEAD commit hash for a worktree
+ */
+export const getHeadCommit = (worktreePath: string): string | null => {
+  try {
+    const output = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: worktreePath,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+    });
+    return output.trim() || null;
+  } catch {
+    return null;
   }
 };

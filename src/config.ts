@@ -1,79 +1,213 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { getRepoKey } from "./git.js";
+import type { Config, GlobalConfig, LoadRepoConfigResult } from "./types.js";
 
-export type Config = {
-  postCreateHook?: string;
-  openCommand?: string; // Custom command to open worktree folder (e.g., "webstorm", "code")
-  launchCommand?: string; // Custom command to launch instead of opencode (e.g., "cursor", "claude")
-};
+// Re-export Config type for backwards compatibility
+export type { Config } from "./types.js";
 
-const CONFIG_FILENAME = ".opencode-worktree.json";
-
-/**
- * Get the path to the config file for a repo
- */
-export const getConfigPath = (repoRoot: string): string => {
-  return join(repoRoot, CONFIG_FILENAME);
-};
+const CONFIG_DIR = join(homedir(), ".config", "opencode-worktree");
+const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
 /**
- * Check if a config file exists for the repo
+ * Get the path to the global config directory
  */
-export const configExists = (repoRoot: string): boolean => {
-  return existsSync(getConfigPath(repoRoot));
+export const getGlobalConfigDir = (): string => {
+  return CONFIG_DIR;
 };
 
 /**
- * Load per-repo configuration from .opencode-worktree.json in the repo root
+ * Get the path to the global config file
  */
-export const loadRepoConfig = (repoRoot: string): Config => {
-  const configPath = getConfigPath(repoRoot);
+export const getGlobalConfigPath = (): string => {
+  return CONFIG_FILE;
+};
 
-  if (!existsSync(configPath)) {
-    return {};
-  }
+/**
+ * Get the default configuration values
+ */
+export const getDefaultConfig = (): Config => {
+  return {
+    postCreateHook: "",
+    openCommand: "",
+    launchCommand: "opencode",
+  };
+};
 
+/**
+ * Create an empty global config structure
+ */
+const createEmptyGlobalConfig = (): GlobalConfig => {
+  return {
+    default: getDefaultConfig(),
+    repos: {},
+  };
+};
+
+/**
+ * Ensure the config directory exists
+ */
+const ensureConfigDir = (): boolean => {
   try {
-    const content = readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(content);
-
-    // Validate the config structure
-    if (typeof parsed !== "object" || parsed === null) {
-      return {};
+    if (!existsSync(CONFIG_DIR)) {
+      mkdirSync(CONFIG_DIR, { recursive: true });
     }
-
-    const config: Config = {};
-
-    if (typeof parsed.postCreateHook === "string") {
-      config.postCreateHook = parsed.postCreateHook;
-    }
-
-    if (typeof parsed.openCommand === "string") {
-      config.openCommand = parsed.openCommand;
-    }
-
-    if (typeof parsed.launchCommand === "string") {
-      config.launchCommand = parsed.launchCommand;
-    }
-
-    return config;
-  } catch {
-    // If we can't read or parse the config, return empty
-    return {};
-  }
-};
-
-/**
- * Save configuration to .opencode-worktree.json in the repo root
- */
-export const saveRepoConfig = (repoRoot: string, config: Config): boolean => {
-  const configPath = getConfigPath(repoRoot);
-
-  try {
-    const content = JSON.stringify(config, null, 2) + "\n";
-    writeFileSync(configPath, content, "utf8");
     return true;
   } catch {
     return false;
   }
+};
+
+/**
+ * Load the entire global config file
+ */
+export const loadGlobalConfig = (): GlobalConfig => {
+  if (!existsSync(CONFIG_FILE)) {
+    return createEmptyGlobalConfig();
+  }
+
+  try {
+    const content = readFileSync(CONFIG_FILE, "utf8");
+    const parsed = JSON.parse(content);
+
+    // Validate and normalize the config structure
+    if (typeof parsed !== "object" || parsed === null) {
+      return createEmptyGlobalConfig();
+    }
+
+    const globalConfig: GlobalConfig = {
+      default: { ...getDefaultConfig() },
+      repos: {},
+    };
+
+    // Parse default config
+    if (typeof parsed.default === "object" && parsed.default !== null) {
+      if (typeof parsed.default.postCreateHook === "string") {
+        globalConfig.default.postCreateHook = parsed.default.postCreateHook;
+      }
+      if (typeof parsed.default.openCommand === "string") {
+        globalConfig.default.openCommand = parsed.default.openCommand;
+      }
+      if (typeof parsed.default.launchCommand === "string") {
+        globalConfig.default.launchCommand = parsed.default.launchCommand;
+      }
+    }
+
+    // Parse repos config
+    if (typeof parsed.repos === "object" && parsed.repos !== null) {
+      for (const [key, value] of Object.entries(parsed.repos)) {
+        if (typeof value === "object" && value !== null) {
+          const repoConfig: Partial<Config> = {};
+          const v = value as Record<string, unknown>;
+
+          if (typeof v.postCreateHook === "string") {
+            repoConfig.postCreateHook = v.postCreateHook;
+          }
+          if (typeof v.openCommand === "string") {
+            repoConfig.openCommand = v.openCommand;
+          }
+          if (typeof v.launchCommand === "string") {
+            repoConfig.launchCommand = v.launchCommand;
+          }
+
+          // Only add if there are actual values
+          if (Object.keys(repoConfig).length > 0) {
+            globalConfig.repos[key] = repoConfig;
+          }
+        }
+      }
+    }
+
+    return globalConfig;
+  } catch {
+    // If we can't read or parse the config, return empty
+    return createEmptyGlobalConfig();
+  }
+};
+
+/**
+ * Save the entire global config file
+ */
+export const saveGlobalConfig = (config: GlobalConfig): boolean => {
+  if (!ensureConfigDir()) {
+    return false;
+  }
+
+  try {
+    const content = JSON.stringify(config, null, 2) + "\n";
+    writeFileSync(CONFIG_FILE, content, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Load configuration for a specific repository
+ * Merges default config with repo-specific overrides
+ * Returns the config and the repo key (null if no remote)
+ */
+export const loadRepoConfig = (repoRoot: string): LoadRepoConfigResult => {
+  const repoKey = getRepoKey(repoRoot);
+  const globalConfig = loadGlobalConfig();
+
+  // Start with default config
+  const config: Config = { ...globalConfig.default };
+
+  // If we have a repo key, merge in repo-specific config
+  if (repoKey && globalConfig.repos[repoKey]) {
+    const repoConfig = globalConfig.repos[repoKey];
+
+    if (repoConfig.postCreateHook !== undefined) {
+      config.postCreateHook = repoConfig.postCreateHook;
+    }
+    if (repoConfig.openCommand !== undefined) {
+      config.openCommand = repoConfig.openCommand;
+    }
+    if (repoConfig.launchCommand !== undefined) {
+      config.launchCommand = repoConfig.launchCommand;
+    }
+  }
+
+  return { config, repoKey };
+};
+
+/**
+ * Save configuration for a specific repository
+ * Only saves values that differ from the default
+ * Returns false if there's no remote (can't save repo-specific config)
+ */
+export const saveRepoConfig = (repoRoot: string, config: Config): boolean => {
+  const repoKey = getRepoKey(repoRoot);
+
+  if (!repoKey) {
+    // No remote - can't save repo-specific config
+    return false;
+  }
+
+  const globalConfig = loadGlobalConfig();
+
+  // Calculate which values differ from default
+  const repoConfig: Partial<Config> = {};
+
+  if (config.postCreateHook !== globalConfig.default.postCreateHook) {
+    repoConfig.postCreateHook = config.postCreateHook;
+  }
+  if (config.openCommand !== globalConfig.default.openCommand) {
+    repoConfig.openCommand = config.openCommand;
+  }
+  if (config.launchCommand !== globalConfig.default.launchCommand) {
+    repoConfig.launchCommand = config.launchCommand;
+  }
+
+  // Update or remove the repo entry
+  if (Object.keys(repoConfig).length > 0) {
+    globalConfig.repos[repoKey] = repoConfig;
+  } else {
+    // All values match default, remove the entry
+    delete globalConfig.repos[repoKey];
+  }
+
+  return saveGlobalConfig(globalConfig);
 };
