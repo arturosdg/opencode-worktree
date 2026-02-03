@@ -43,7 +43,7 @@ opencode-worktree /path/to/your/repo
 
 - `Up`/`Down` or `j`/`k`: navigate
 - `Enter`: open selected worktree in opencode (or toggle selection in delete mode)
-- `o`: open worktree folder in file manager (Finder/Explorer)
+- `o`: open worktree folder in file manager or custom editor (configurable)
 - `d`: enter multi-select delete mode (press again to confirm deletion)
 - `n`: create new worktree
 - `c`: edit configuration (post-create hooks)
@@ -67,7 +67,10 @@ When you first run `opencode-worktree` in a repository without a configuration f
 
 ### Editing configuration
 
-Press `c` at any time to edit your configuration. Currently, this allows you to set or modify the post-create hook command.
+Press `c` at any time to edit your configuration. You can configure:
+
+- **Post-create hook**: Command to run after creating a worktree (e.g., `npm install`)
+- **Open command**: Custom command for opening worktree folders (e.g., `webstorm`, `code`)
 
 ### Post-create hooks
 
@@ -92,6 +95,31 @@ The hook output is streamed to the TUI in real-time. If the hook fails, you can 
 ```json
 {
   "postCreateHook": "npm install && npm run setup"
+}
+```
+
+### Custom open command
+
+Use a custom command when pressing `o` to open worktree folders. Useful for opening in your preferred IDE.
+
+```json
+{
+  "openCommand": "webstorm"
+}
+```
+
+**Examples:**
+
+```json
+{
+  "openCommand": "code"
+}
+```
+
+```json
+{
+  "postCreateHook": "npm install",
+  "openCommand": "webstorm"
 }
 ```
 

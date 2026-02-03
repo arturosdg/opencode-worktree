@@ -20,23 +20,32 @@ export const launchOpenCode = (cwd: string): void => {
 };
 
 /**
- * Open a path in the system file manager (Finder on macOS, xdg-open on Linux, explorer on Windows)
+ * Open a path in the system file manager or with a custom command
+ * If customCommand is provided, uses that instead of the system default
  */
-export const openInFileManager = (path: string): boolean => {
-  const platform = process.platform;
+export const openInFileManager = (path: string, customCommand?: string): boolean => {
   let command: string;
   let args: string[];
 
-  if (platform === "darwin") {
-    command = "open";
-    args = [path];
-  } else if (platform === "win32") {
-    command = "explorer";
+  if (customCommand) {
+    // Use custom command (e.g., "webstorm", "code")
+    command = customCommand;
     args = [path];
   } else {
-    // Linux and others
-    command = "xdg-open";
-    args = [path];
+    // Use system default
+    const platform = process.platform;
+
+    if (platform === "darwin") {
+      command = "open";
+      args = [path];
+    } else if (platform === "win32") {
+      command = "explorer";
+      args = [path];
+    } else {
+      // Linux and others
+      command = "xdg-open";
+      args = [path];
+    }
   }
 
   try {

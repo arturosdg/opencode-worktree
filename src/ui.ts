@@ -91,7 +91,9 @@ class WorktreeSelector {
   // Config editor state
   private isEditingConfig = false;
   private configContainer: BoxRenderable | null = null;
-  private configInput: InputRenderable | null = null;
+  private configHookInput: InputRenderable | null = null;
+  private configOpenInput: InputRenderable | null = null;
+  private configActiveField: "hook" | "open" = "hook";
   private isFirstTimeSetup = false;
 
   constructor(
@@ -263,8 +265,21 @@ class WorktreeSelector {
         return;
       }
       if (key.name === "return") {
-        const value = this.configInput?.value || "";
-        this.handleConfigSave(value);
+        this.handleConfigSave();
+        return;
+      }
+      if (key.name === "tab") {
+        // Switch between fields
+        if (this.configActiveField === "hook") {
+          this.configActiveField = "open";
+          this.configHookInput?.blur();
+          this.configOpenInput?.focus();
+        } else {
+          this.configActiveField = "hook";
+          this.configOpenInput?.blur();
+          this.configHookInput?.focus();
+        }
+        this.renderer.requestRender();
         return;
       }
       return;
@@ -350,9 +365,17 @@ class WorktreeSelector {
       return;
     }
 
-    const success = openInFileManager(worktree.path);
+    // Load config to check for custom open command
+    const config = this.repoRoot ? loadRepoConfig(this.repoRoot) : {};
+    const customCommand = config.openCommand;
+
+    const success = openInFileManager(worktree.path, customCommand);
     if (success) {
-      this.setStatus(`Opened ${worktree.path} in file manager.`, "success");
+      if (customCommand) {
+        this.setStatus(`Opened ${worktree.path} with ${customCommand}.`, "success");
+      } else {
+        this.setStatus(`Opened ${worktree.path} in file manager.`, "success");
+      }
     } else {
       this.setStatus("Failed to open file manager.", "error");
     }
@@ -658,6 +681,7 @@ class WorktreeSelector {
     }
 
     this.isEditingConfig = true;
+    this.configActiveField = "hook";
     this.selectElement.visible = false;
     this.selectElement.blur();
 
@@ -665,8 +689,8 @@ class WorktreeSelector {
     const existingConfig = loadRepoConfig(this.repoRoot);
 
     const title = this.isFirstTimeSetup
-      ? "First-time Setup: Configure Post-create Hook"
-      : "Edit Post-create Hook";
+      ? "First-time Setup: Project Configuration"
+      : "Edit Project Configuration";
 
     this.configContainer = new BoxRenderable(this.renderer, {
       id: "config-container",
@@ -674,7 +698,7 @@ class WorktreeSelector {
       left: 2,
       top: 3,
       width: 76,
-      height: 8,
+      height: 12,
       borderStyle: "single",
       borderColor: "#38BDF8",
       title,
@@ -684,50 +708,76 @@ class WorktreeSelector {
     });
     this.renderer.root.add(this.configContainer);
 
-    const helpText = new TextRenderable(this.renderer, {
-      id: "config-help",
+    // Post-create hook field
+    const hookLabel = new TextRenderable(this.renderer, {
+      id: "config-hook-label",
       position: "absolute",
       left: 1,
       top: 1,
-      content: "Command to run after creating a worktree (e.g., npm install):",
+      content: "Post-create hook (e.g., npm install):",
       fg: "#94A3B8",
     });
-    this.configContainer.add(helpText);
+    this.configContainer.add(hookLabel);
 
-    const skipHint = new TextRenderable(this.renderer, {
-      id: "config-skip-hint",
-      position: "absolute",
-      left: 1,
-      top: 4,
-      content: "Leave empty to skip post-create hooks.",
-      fg: "#64748B",
-    });
-    this.configContainer.add(skipHint);
-
-    this.configInput = new InputRenderable(this.renderer, {
+    this.configHookInput = new InputRenderable(this.renderer, {
       id: "config-hook-input",
       position: "absolute",
       left: 1,
-      top: 3,
+      top: 2,
       width: 72,
       placeholder: "npm install",
       value: existingConfig.postCreateHook || "",
       focusedBackgroundColor: "#1E293B",
       backgroundColor: "#1E293B",
     });
-    this.configContainer.add(this.configInput);
+    this.configContainer.add(this.configHookInput);
 
-    this.instructions.content = "Enter to save • Esc to cancel";
+    // Open command field
+    const openLabel = new TextRenderable(this.renderer, {
+      id: "config-open-label",
+      position: "absolute",
+      left: 1,
+      top: 4,
+      content: "Open folder command (e.g., webstorm, code):",
+      fg: "#94A3B8",
+    });
+    this.configContainer.add(openLabel);
+
+    this.configOpenInput = new InputRenderable(this.renderer, {
+      id: "config-open-input",
+      position: "absolute",
+      left: 1,
+      top: 5,
+      width: 72,
+      placeholder: "open (default)",
+      value: existingConfig.openCommand || "",
+      focusedBackgroundColor: "#1E293B",
+      backgroundColor: "#1E293B",
+    });
+    this.configContainer.add(this.configOpenInput);
+
+    // Help text
+    const helpText = new TextRenderable(this.renderer, {
+      id: "config-help",
+      position: "absolute",
+      left: 1,
+      top: 7,
+      content: "Tab to switch fields • Leave empty to use defaults",
+      fg: "#64748B",
+    });
+    this.configContainer.add(helpText);
+
+    this.instructions.content = "Tab switch • Enter save • Esc cancel";
     this.setStatus(
       this.isFirstTimeSetup
-        ? "Welcome! Configure your post-create hook for this repository."
-        : "Edit the post-create hook command.",
+        ? "Welcome! Configure your project settings."
+        : "Edit project configuration.",
       "info"
     );
 
     // Delay focus to prevent the triggering keypress from being captured
     setTimeout(() => {
-      this.configInput?.focus();
+      this.configHookInput?.focus();
       this.renderer.requestRender();
     }, 0);
   }
@@ -736,14 +786,18 @@ class WorktreeSelector {
     this.isEditingConfig = false;
     this.isFirstTimeSetup = false;
 
-    if (this.configInput) {
-      this.configInput.blur();
+    if (this.configHookInput) {
+      this.configHookInput.blur();
+    }
+    if (this.configOpenInput) {
+      this.configOpenInput.blur();
     }
 
     if (this.configContainer) {
       this.renderer.root.remove(this.configContainer.id);
       this.configContainer = null;
-      this.configInput = null;
+      this.configHookInput = null;
+      this.configOpenInput = null;
     }
 
     this.selectElement.visible = true;
@@ -757,27 +811,35 @@ class WorktreeSelector {
     }, 0);
   }
 
-  private handleConfigSave(hookCommand: string): void {
+  private handleConfigSave(): void {
     if (!this.repoRoot) {
       this.setStatus("No git repository found.", "error");
       this.hideConfigEditor();
       return;
     }
 
-    const trimmed = hookCommand.trim();
+    const hookValue = (this.configHookInput?.value || "").trim();
+    const openValue = (this.configOpenInput?.value || "").trim();
     const config: Config = {};
 
-    if (trimmed) {
-      config.postCreateHook = trimmed;
+    if (hookValue) {
+      config.postCreateHook = hookValue;
+    }
+    if (openValue) {
+      config.openCommand = openValue;
     }
 
     const success = saveRepoConfig(this.repoRoot, config);
 
     if (success) {
-      if (trimmed) {
-        this.setStatus(`Post-create hook saved: "${trimmed}"`, "success");
+      const changes: string[] = [];
+      if (hookValue) changes.push(`hook: "${hookValue}"`);
+      if (openValue) changes.push(`open: "${openValue}"`);
+      
+      if (changes.length > 0) {
+        this.setStatus(`Config saved: ${changes.join(", ")}`, "success");
       } else {
-        this.setStatus("Post-create hook cleared.", "success");
+        this.setStatus("Config cleared.", "success");
       }
     } else {
       this.setStatus("Failed to save config.", "error");
