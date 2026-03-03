@@ -155,7 +155,11 @@ Previous versions stored config in `.opencode-worktree.json` files in each repos
 
 ## Update notifications
 
-When a new version is published to npm, the TUI will show a non-intrusive update message in the title bar. The version check runs in the background and doesn't slow down startup.
+On launch, the app performs a single in-process npm version check and stores the result in a local cache.
+
+If a newer version is found, the warning appears on the next launch in the title bar as:
+
+`Update: <current> -> <latest> (npm i -g)`
 
 ## Development
 
