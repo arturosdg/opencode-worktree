@@ -10,7 +10,7 @@ import {
   type KeyEvent,
   type SelectOption,
 } from "@opentui/core";
-import { checkForUpdate } from "./update-check.js";
+import { checkForUpdatesOnLaunch, getCachedUpdateNotice } from "./update-check.js";
 import { basename } from "node:path";
 import {
   checkoutBranch,
@@ -145,21 +145,17 @@ class WorktreeSelector {
     });
     this.renderer.root.add(this.title);
 
-    // Display version or update notification in title line
+    // Display version/update notice from previous launch, then refresh cache now.
     if (this.pkg) {
-      const updateInfo = checkForUpdate(this.pkg);
+      const updateInfo = getCachedUpdateNotice(this.pkg);
+      checkForUpdatesOnLaunch(this.pkg);
 
-      let noticeContent: string;
-      let noticeColor: string;
+      let noticeContent = `v${this.pkg.version}`;
+      let noticeColor = "#64748B";
 
       if (updateInfo?.hasUpdate) {
-        // Update available
-        noticeContent = `Update: ${updateInfo.current} → ${updateInfo.latest} (npm i -g)`;
-        noticeColor = "#F59E0B"; // Amber
-      } else {
-        // On latest version (or no cache yet)
-        noticeContent = `v${this.pkg.version}`;
-        noticeColor = "#64748B"; // Subtle gray
+        noticeContent = `Update: ${updateInfo.current} -> ${updateInfo.latest} (npm i -g)`;
+        noticeColor = "#F59E0B";
       }
 
       this.versionNotice = new TextRenderable(renderer, {
